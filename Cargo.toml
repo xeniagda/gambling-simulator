@@ -2,3 +2,7 @@
 name = "gambling-simulator"
 version = "0.1.0"
 edition = "2024"
+
+[dev-dependencies]
+plotly = { version = "0.14.0", features = ["plotly_embed_js", "plotly_image"] }
+build_html = "2.7.0"
