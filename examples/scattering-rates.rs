@@ -1,5 +1,6 @@
 #![allow(non_snake_case, mixed_script_confusables)]
 
+use gambling_simulator::consts::EV_TO_J;
 use gambling_simulator::semiconductor::{Electron, PhononType, Semiconductor};
 
 mod common;
@@ -15,56 +16,85 @@ fn main() {
     let L_valley_idx = sample_sc.valleys.iter().position(|x| x.name == "L").expect("No L valley in GaAs");
     let X_valley_idx = sample_sc.valleys.iter().position(|x| x.name == "X").expect("No X valley in GaAs");
 
-    let n = 100;
+    let n = 500;
 
-    let kxs = linspace(0., 1.0 / sample_sc.lattice_constant, n).collect::<Vec<_>>();
+    // outside this and the bands stop being correct
+    let e_init = 3. * EV_TO_J;
+    let k_mag = sample_sc.valleys[Γ_valley_idx].kmag_for_e(e_init);
+    let kxs = linspace(0., k_mag, n).collect::<Vec<_>>();
 
     let mut rate_plots = Vec::new();
 
     for valley_idx in [Γ_valley_idx, L_valley_idx, X_valley_idx] {
         let valley = &sample_sc.valleys[valley_idx];
+        eprintln!("For {}:", valley.name);
         let electrons = kxs.iter().map(|&kx| Electron {
             sc: &sample_sc,
             valley_idx,
             k: [kx, 0., 0.],
         }).collect::<Vec<_>>();
 
-        let mut plot_rate_valley = Plot::new();
-        plot_rate_valley.add_trace(Scatter::new (
-                electrons.iter().map(|e| e.energy_eV()).collect(),
-                electrons.iter().map(
-                    |e| e.scattering_rate_intravalley_acoustic_phonon(PhononType::Emission).max(1.0).log10()
-                ).collect(),
-            )
-            .mode(Mode::Lines)
-            .line(Line::new().color("black"))
-            .name("Intra ac. phonon em./abs.")
-        );
+        if let Some(max_energy) = electrons.iter().map(|e| e.energy_eV()).max_by(f64::total_cmp) {
+            eprintln!("  Maximum energy: {:.4} meV", 1e3 * max_energy);
+        }
 
-        for (ty, name, col) in [(PhononType::Emission, "em", "blue"), (PhononType::Absorption, "abs", "green")] {
+        let mut plot_rate_valley = Plot::new();
+
+        let mut plot_rate_funtion = |name: &str, f: Box<dyn Fn(&Electron) -> f64>, (mode, dash, color): (Mode, DashType, &str)| {
             plot_rate_valley.add_trace(Scatter::new (
                     electrons.iter().map(|e| e.energy_eV()).collect(),
-                    electrons.iter().map(
-                        |e| e.scattering_rate_intravalley_optical_phonon(ty).max(1.0).log10()
-                    ).collect(),
+                    electrons.iter().map(|e| f(e).max(1.0).log10()).collect(),
                 )
-                .mode(Mode::Lines)
-                .line(Line::new().color(col))
-                .name(format!("Intra opt. phonon {}.", name))
+                .mode(mode)
+                .line(Line::new().color(color.to_owned()).dash(dash))
+                .name(name.to_owned())
+            );
+            eprint!("  {name:>40}: ");
+
+
+
+            // Find maximum
+            let Some((max_e, max_rate)) = electrons
+                .iter()
+                .map(|e| (e, f(e)))
+                .max_by(|(_e1, f1), (_e2, f2)| f1.total_cmp(f2))
+            else {
+                eprintln!("nothing!");
+                return;
+            };
+            eprint!("rate = {: >8.4} ps⁻¹ for E = {: >8.4} meV", max_rate / 1.0e12, 1e3 * max_e.energy_eV());
+            if let Some(true) = electrons.iter().map(|e| e.energy_eV()).max_by(|e1, e2| e1.total_cmp(e2)).map(|e| e == max_e.energy_eV()) {
+                eprint!(" (maximum energy)");
+            }
+            // Check for NaN's
+            if let Some(nan_energy) = electrons
+                .iter()
+                .find_map(|e| f(e).is_nan().then(|| e.energy_eV())) {
+                eprint!(" [NaN at {: >8.4} meV]", 1e3 * nan_energy);
+            }
+            eprintln!();
+        };
+
+        plot_rate_funtion(
+            "Intra ac. phonon em./abs.",
+            Box::new(|e| e.rate_intra_ac_phonon(None)),
+            (Mode::Lines, DashType::Solid, "blue"),
+        );
+
+        for (ty, name, col) in [(PhononType::Emission, "em", "red"), (PhononType::Absorption, "abs", "purple")] {
+            plot_rate_funtion(
+                &format!("Intra opt. phonon {}.", name),
+                Box::new(move |e| e.rate_intra_opt_phonon(ty, None)),
+                (Mode::Lines, DashType::Solid, col),
             );
 
             for (destination_valley_idx, dashty) in [(Γ_valley_idx, DashType::Dash), (L_valley_idx, DashType::Dot), (X_valley_idx, DashType::DashDot)] {
                 let dest_valley = &sample_sc.valleys[destination_valley_idx];
 
-                plot_rate_valley.add_trace(Scatter::new (
-                        electrons.iter().map(|e| e.energy_eV()).collect(),
-                        electrons.iter().map(
-                            |e| e.scattering_rate_intervalley_optical_phonon(ty, destination_valley_idx).max(1.0).log10()
-                        ).collect(),
-                    )
-                    .mode(Mode::Lines)
-                    .line(Line::new().color(col).dash(dashty))
-                    .name(format!("Inter opt. phonon {}. to {}", name, dest_valley.name))
+                plot_rate_funtion(
+                    &format!("Inter opt. phonon {}. to {}", name, dest_valley.name),
+                    Box::new(move |e| e.rate_inter_opt_phonon(ty, destination_valley_idx, None)),
+                    (Mode::Lines, dashty, col),
                 );
             }
         }

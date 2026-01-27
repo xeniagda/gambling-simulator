@@ -1,5 +1,6 @@
 #![allow(non_snake_case, mixed_script_confusables)] // for band names such as Γ and L etc
 
+use gambling_simulator::consts::J_TO_EV;
 use gambling_simulator::semiconductor::{Electron, Semiconductor};
 
 use plotly::common::{Line, Mode};
@@ -54,8 +55,8 @@ fn main() {
 
             let dir_mul = if which == Before { 1. } else { -1. };
             let scatter = Scatter::new(
-                    electrons.iter().map(|el| dir_mul * el.k_mag() + cum_x).collect(),
-                    electrons.iter().map(|el| el.energy_eV() + this.energy).collect(),
+                    electrons.iter().map(|el| (dir_mul * el.k_mag() + cum_x) * sample_sc.lattice_constant).collect(),
+                    electrons.iter().map(|el| (el.energy() + this.energy) * J_TO_EV).collect(),
                 )
                 .mode(Mode::Lines)
                 .line(Line::new().color(col))
@@ -64,11 +65,11 @@ fn main() {
             plot.add_trace(scatter);
 
             if which == Which::Next || i == 0 {
-                tick_values.push(cum_x);
+                tick_values.push(cum_x * sample_sc.lattice_constant);
                 tick_labels.push(this.name);
             }
             if which == Which::Before {
-                tick_values.push(cum_x + dist / 2.0);
+                tick_values.push((cum_x + dist / 2.0) * sample_sc.lattice_constant);
                 tick_labels.push(line_name);
             }
 
@@ -83,7 +84,7 @@ fn main() {
             .title("E vs k")
             .x_axis(
                 Axis::new().title("$k$")
-                    .range(vec![0.0, cum_x])
+                    .range(vec![0.0, cum_x * sample_sc.lattice_constant])
                     .tick_values(tick_values)
                     .tick_text(tick_labels)
             )

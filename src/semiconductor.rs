@@ -1,9 +1,11 @@
 use std::f64::consts::PI;
+use rand::Rng;
+
 use crate::consts::*;
 
 /// Valley in the conduction band
 /// All valleys are currently considered spherical
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Valley {
     pub name: &'static str,
     /// The k-vector for each equivalent minimum-point of the valley
@@ -26,9 +28,16 @@ impl Valley {
     pub fn effective_mass(&self) -> f64 {
         self.effective_mass_to_m0 * ELECTRON_MASS
     }
+
+    // What k vector magnitude for getting a specific energy in this valley
+    pub fn kmag_for_e(&self, e: f64) -> f64 {
+        let spherical_energy = e * (1. + self.nonparabolicity * e);
+        (spherical_energy * 2. * self.effective_mass()).sqrt() / PLANCK_SI
+    }
+
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Semiconductor {
     pub valleys: Box<[Valley]>,
     // in K
@@ -101,6 +110,7 @@ impl Semiconductor {
     }
 }
 
+#[derive(Clone)]
 pub struct Electron<'sc> {
     /// Semiconductor we are in
     pub sc: &'sc Semiconductor,
@@ -110,9 +120,10 @@ pub struct Electron<'sc> {
     /// k-vector relative to the center of the valley we are in
     /// m^-1
     pub k: [f64; 3],
+    pub pos: [f64; 3],
 }
 
-impl Electron<'_> {
+impl<'sc> Electron<'sc> {
     pub fn valley(&self) -> &Valley {
         &self.sc.valleys[self.valley_idx]
     }
@@ -137,25 +148,181 @@ impl Electron<'_> {
         self.energy() * J_TO_EV
     }
 
-    // in m/s
-    pub fn velocity(&self) -> f64 {
+    /// Velocity vector, taking into account nonparabolicity
+    pub fn velocity(&self) -> [f64; 3] {
         let energy = self.energy();
-        PLANCK_SI * self.k_mag() / (self.valley().effective_mass() * (1. + 2. * self.valley().nonparabolicity * energy))
+        let nonparab = 1. + 2. * self.valley().nonparabolicity * energy;
+        let f = PLANCK_SI / self.valley().effective_mass() * nonparab;
+        [f * self.k[0], f * self.k[1], f * self.k[2]]
     }
+}
+
+pub struct ScatteringMechanism<'sc, R: Rng> {
+    pub name_full: &'static str,
+    pub name_short: &'static str,
+    /// Scattering rate for a specific electron at it's energy
+    /// Given in s^-1
+    pub rate: fn(&Electron<'sc>) -> f64,
+    /// Maximum rate for this electron for any energy below emax
+    /// May over-estimate the rate
+    pub maximum_rate:  fn(&Electron<'sc>, emax: f64) -> f64,
+    // TODO: Maybe it's better to take a &mut Electron?
+    // Electron doesn't carry much data though so whatever
+    pub resulting_state: fn(&Electron<'sc>, &mut R) -> Electron<'sc>,
 }
 
 #[derive(PartialEq, Clone, Copy)]
 pub enum PhononType { Emission, Absorption }
 
 // All rates in s^-1
-// TODO: We should return some extra information about E' and distribution of k' ?
-impl Electron<'_> {
+impl<'sc> Electron<'sc> {
+    pub fn all_mechanisms<R: Rng>() -> Box<[ScatteringMechanism<'sc, R>]> {
+        let intra_ac_phonon = ScatteringMechanism {
+            name_full: "Intravalley acoustic phonon",
+            name_short: "intra ac. phonon",
+            rate: |e| e.rate_intra_ac_phonon(None),
+            // Acoustic phonon scattering rate is strictly increasing
+            maximum_rate: |el, en| el.rate_intra_ac_phonon(Some(en)),
+            resulting_state: |e, r| e.scatter_isotropic(r, e.energy()),
+        };
+        let intra_opt_phonon_abs= ScatteringMechanism {
+            name_full: "Intravalley optical phonon absorption",
+            name_short: "intra opt. phonon abs.",
+            rate: |e| e.rate_intra_opt_phonon(PhononType::Absorption, None),
+            // Acoustic phonon scattering rate is strictly decreasing
+            maximum_rate: |el, _en| el.rate_intra_opt_phonon(PhononType::Absorption, Some(0.)),
+            // For absorption we gain energy from the phonon
+            resulting_state: |e, r| e.scatter_mag2(r, e.energy() + e.valley().optical_phonon_energy),
+        };
+        let intra_opt_phonon_em= ScatteringMechanism {
+            name_full: "Intravalley optical phonon emission",
+            name_short: "intra opt. phonon em.",
+            rate: |e| e.rate_intra_opt_phonon(PhononType::Emission, None),
+            // The maximum is somewhere around 130meV
+            // Add a factor of 2 for safety (:
+            maximum_rate: |el, _en| 2. * el.rate_intra_opt_phonon(PhononType::Emission, Some(0.125 * EV_TO_J)),
+            // For absorption we gain energy from the phonon
+            resulting_state: |e, r| e.scatter_mag2(r, e.energy() - e.valley().optical_phonon_energy),
+        };
+        let mut mechanisms = vec![intra_ac_phonon, intra_opt_phonon_abs, intra_opt_phonon_em];
+
+        macro_rules! gen_intervalley {
+            ($dest_valley_idx:expr, $name:expr) => {
+                let inter_opt_phonon_abs = ScatteringMechanism {
+                    name_full: concat!("Intervalley optical phonon absorption to ", $name),
+                    name_short: concat!("inter →", $name, " opt. phonon em"),
+                    rate: |e| e.rate_inter_opt_phonon(PhononType::Absorption, $dest_valley_idx, None),
+                    // Strictly increasing
+                    maximum_rate: |el, en| el.rate_inter_opt_phonon(PhononType::Absorption, $dest_valley_idx, Some(en)),
+                    // For absorption we gain energy from the phonon
+                    resulting_state: |e, r| {
+                        let energy_after = e.energy() + e.valley().intervalley_phonon_energy[$dest_valley_idx] - (e.sc.valleys[$dest_valley_idx].energy - e.valley().energy);
+                        let mut e_ = e.clone();
+                        e_.valley_idx = $dest_valley_idx;
+                        e_.scatter_isotropic(r, energy_after)
+                    },
+                };
+                mechanisms.push(inter_opt_phonon_abs);
+
+                let inter_opt_phonon_em = ScatteringMechanism {
+                    name_full: concat!("Intervalley optical phonon emission to ", $name),
+                    name_short: concat!("inter →", $name, " opt. phonon em"),
+                    rate: |e| e.rate_inter_opt_phonon(PhononType::Emission, $dest_valley_idx, None),
+                    // Strictly increasing
+                    maximum_rate: |el, en| el.rate_inter_opt_phonon(PhononType::Emission, $dest_valley_idx, Some(en)),
+                    // For absorption we gain energy from the phonon
+                    resulting_state: |e, r| {
+                        let energy_after = e.energy() - e.valley().intervalley_phonon_energy[$dest_valley_idx] - (e.sc.valleys[$dest_valley_idx].energy - e.valley().energy);
+                        let mut e_ = e.clone();
+                        e_.valley_idx = $dest_valley_idx;
+                        e_.scatter_isotropic(r, energy_after)
+                    },
+                };
+                mechanisms.push(inter_opt_phonon_em);
+            }
+        }
+        // only works for GaAs!!!!
+        gen_intervalley!(0, "Γ");
+        gen_intervalley!(1, "L");
+        gen_intervalley!(2, "X");
+
+        mechanisms.into_boxed_slice()
+    }
+
+    /// Resulting state after an isotropic (independent of k') collision resulting in an energy of `res_energy`
+    pub fn scatter_isotropic<R: Rng>(&self, rng: &mut R, res_energy: f64) -> Electron<'sc> {
+        let k_res_mag = self.valley().kmag_for_e(res_energy);
+
+        // Spherical coordinates: pick ϕ uniformly, pick θ = asin(r) for r ∈ [-1, 1]
+        let phi = rng.random_range(0. ..= 2.*PI);
+        let theta = rng.random_range(-1f64 ..= 1f64).acos();
+
+        let k_res = [
+            k_res_mag * phi.cos() * theta.sin(),
+            k_res_mag * phi.sin() * theta.sin(),
+            k_res_mag * theta.cos(),
+        ];
+        Electron {
+            k: k_res,
+            ..*self
+        }
+    }
+
+    // Resulting state after a collision where the probability of a state k' is proportional to |k-k'|^⁻²
+    pub fn scatter_mag2<R: Rng>(&self, rng: &mut R, res_energy: f64) -> Electron<'sc> {
+        let k_res_mag = self.valley().kmag_for_e(res_energy);
+
+        // create a coordinate system with zz = k
+        let kmag = self.k_mag();
+        // Check for zero-energy electron
+        let zzhat = if kmag > 0. {
+            [self.k[0] / kmag, self.k[1] / kmag, self.k[2] / kmag]
+        } else {
+            [1., 0., 0.]
+        };
+        // Define xxhat = normalize(xhat cross zzhat) or normalize(yhat cross zzhat) (depending on which is more normalizable)
+        // TODO: If self.k is very close to x this will kinda explode
+        let xxhat = {
+            let xx1 = [zzhat[2], 0., -zzhat[0]];
+            let xx1mag = xx1.iter().map(|x| x.powi(2)).sum::<f64>().sqrt();
+            let xx2 = [0., -zzhat[0], zzhat[1]];
+            let xx2mag = xx2.iter().map(|x| x.powi(2)).sum::<f64>().sqrt();
+            let (xx, xxmag) = if xx1mag > xx2mag { (xx1, xx1mag) } else { (xx2, xx2mag) };
+            [xx[0] / xxmag, xx[1] / xxmag, xx[2] / xxmag]
+        };
+        // Define yyhat = normalize(xxhat cross zzhat) = xxhat cross zzhat since both are already normalized and perpendicular
+        let yyhat = [
+            xxhat[1] * zzhat[2] - xxhat[2] * zzhat[1],
+            xxhat[2] * zzhat[0] - xxhat[0] * zzhat[2],
+            xxhat[0] * zzhat[1] - xxhat[1] * zzhat[0],
+        ];
+
+        // Pick a point on the unit sphere weighted by |k' · zz - alpha|⁻²
+        let alpha = kmag / k_res_mag;
+        let r = rng.random_range(0f64..=1f64);
+        let theta = ((r * (2.*alpha.powi(2) + 2.) - (alpha + 1.).powi(2)) / (4.*r*alpha - (alpha + 1.).powi(2))).acos();
+        let phi = rng.random_range(0. ..= 2.*PI);
+        let k_res_zz = k_res_mag * theta.cos();
+        let k_res_xx = k_res_mag * theta.sin() * phi.cos();
+        let k_res_yy = k_res_mag * theta.sin() * phi.sin();
+
+        let k_res_x = k_res_zz * zzhat[0] + k_res_xx * xxhat[0] + k_res_yy * yyhat[0];
+        let k_res_y = k_res_zz * zzhat[1] + k_res_xx * xxhat[1] + k_res_yy * yyhat[1];
+        let k_res_z = k_res_zz * zzhat[2] + k_res_xx * xxhat[2] + k_res_yy * yyhat[2];
+        let k_res = [k_res_x, k_res_y, k_res_z];
+
+        Electron {
+            k: k_res,
+            ..*self
+        }
+    }
+
     // Phonon energy assumed small, independent of emission/absorption
     // Indep. of k', E' = E
     // TODO: Slightly different form in [monte-carlo-transport-gaas-1969]
-    pub fn scattering_rate_intravalley_acoustic_phonon(&self, _ty: PhononType) -> f64 {
+    pub fn rate_intra_ac_phonon(&self, E: Option<f64>) -> f64 {
         let valley = self.valley();
-        let E = self.energy();
+        let E = E.unwrap_or_else(|| self.energy());
         2f64.sqrt() * valley.effective_mass().powf(1.5) * BOLTZMANN * self.sc.temperature * self.sc.acoustic_deformation_potential.powi(2)
             / (PI * PLANCK_SI.powi(4) * self.sc.sound_velocity.powi(2) * self.sc.density)
             * E.sqrt() * (1. + 2. * E * valley.nonparabolicity) * (1. + E * valley.nonparabolicity).sqrt()
@@ -164,22 +331,26 @@ impl Electron<'_> {
     // Dependent on 1/|k - k'|^2
     // E' = E ± E_phonon
     // From monte-carlo-transport-gaas-1969
-    pub fn scattering_rate_intravalley_optical_phonon(&self, ty: PhononType) -> f64 {
+    pub fn rate_intra_opt_phonon(&self, ty: PhononType, E: Option<f64>) -> f64 {
         let valley = self.valley();
 
         let α = valley.nonparabolicity;
         let N_op = 1./(-1. + (valley.optical_phonon_energy / (BOLTZMANN * self.sc.temperature)).exp());
 
         let N_op_eff = if ty == PhononType::Emission { N_op + 1. } else { N_op };
-        let E = self.energy();
+        let E = E.unwrap_or_else(|| self.energy());
         let E_ = if ty == PhononType::Emission { E - valley.optical_phonon_energy } else { E + valley.optical_phonon_energy };
-        let γE = E * (1. + α * E);
-        let γE_ = E_ * (1. + α * E_);
-
         // can't scatter into if we have too low energy
         if E_ <= 0. {
             return 0.;
         }
+        // If E is too low we will subsequently divide by zero
+        // However, the graph converges as E -> 0⁺
+        // So we cap it at a low value
+        let E = E.max(1e-6 * EV_TO_J);
+        let γE = E * (1. + α * E);
+        let γE_ = E_ * (1. + α * E_);
+
 
         let A = (2. * (1. + α * E) * (1. + α * E_) + α * (γE + γE_)).powi(2);
         let B = -2. * α * γE.sqrt() * γE_.sqrt() * (4. * (1. + α * E) * (1. + α * E_) + α * (γE + γE_));
@@ -196,26 +367,104 @@ impl Electron<'_> {
 
     // Isotropic
     // E' = E ± E_phonon - E_fi
-    pub fn scattering_rate_intervalley_optical_phonon(&self, ty: PhononType, destination_valley_idx: usize) -> f64 {
+    pub fn rate_inter_opt_phonon(&self, ty: PhononType, destination_valley_idx: usize, E: Option<f64>) -> f64 {
         let this_valley = self.valley();
         let dest_valley = &self.sc.valleys[destination_valley_idx];
+
+        let phonon_energy = this_valley.intervalley_phonon_energy[destination_valley_idx];
+        let E = E.unwrap_or_else(|| self.energy());
+        let E_fi = dest_valley.energy - this_valley.energy;
+        let E_ = if ty == PhononType::Emission { E - phonon_energy - E_fi } else { E + phonon_energy - E_fi };
+        if E_ <= 0. {
+            return 0.0;
+        }
 
         let n_dest_valleys = dest_valley.k_center.len();
         // can't scatter into ourselves bozo
         let n_dest_valleys = if destination_valley_idx == self.valley_idx { n_dest_valleys - 1 } else { n_dest_valleys };
 
-        let phonon_energy = this_valley.intervalley_phonon_energy[destination_valley_idx];
-
         let N_op = 1./(-1. + (this_valley.optical_phonon_energy / (BOLTZMANN * self.sc.temperature)).exp());
         let N_op_eff = if ty == PhononType::Emission { N_op + 1. } else { N_op };
-
-        let E = self.energy();
-        let E_fi = dest_valley.energy - this_valley.energy;
-        let E_ = if ty == PhononType::Emission { E - phonon_energy - E_fi } else { E + phonon_energy - E_fi };
 
         N_op_eff * n_dest_valleys as f64 * this_valley.effective_mass().powf(1.5) * self.sc.intervalley_deformation_potential.powi(2) * E_.sqrt()
             / (2f64.sqrt() * PI * self.sc.density * PLANCK_SI.powi(2) * phonon_energy)
     }
-
 }
 
+#[derive(Clone, Copy)]
+pub struct StepInfo {
+    pub applied_field: [f64; 3],
+    pub maximum_assumed_energy: f64,
+}
+
+pub struct FlightResult {
+    /// For how long were we in free flight?
+    pub free_flight_time: f64,
+
+    // TODO: Not needed I think ever
+    // Useful for plotting free flights
+    // equal to dk/dt over flight
+    pub k_acceleration: [f64; 3],
+}
+
+impl<'sc> Electron<'sc> {
+    /// Does one step in the monte carlo process
+    pub fn free_flight<R: Rng>(&mut self, info: &StepInfo, rng: &mut R) -> FlightResult {
+        // TODO: This should be cached. Not sure exactly where though
+        // Scattering should probably be the semiconductor's responsibility
+        let mechs = Electron::all_mechanisms::<R>();
+
+        // Free flight
+        let Γ = mechs.iter().map(|m| (m.maximum_rate)(&self, info.maximum_assumed_energy)).sum::<f64>();
+        // TODO: f64::EPSILON is not the smallest number that we can ln without getting zero. find it
+        let t = -1./Γ * (rng.random_range(0. ..= 1.) + f64::EPSILON).ln();
+
+        // Calculate
+        let a = [
+            -ELECTRON_CHARGE * info.applied_field[0] / self.valley().effective_mass(),
+            -ELECTRON_CHARGE * info.applied_field[1] / self.valley().effective_mass(),
+            -ELECTRON_CHARGE * info.applied_field[2] / self.valley().effective_mass(),
+        ];
+        let v = self.velocity();
+        let e_nonparab_before = PLANCK_SI.powi(2) * self.k_mag() / (2. * self.valley().effective_mass());
+
+        let k_acceleration = [
+            self.valley().effective_mass() / PLANCK_SI * (1. + 2. * self.valley().nonparabolicity * e_nonparab_before) * a[0],
+            self.valley().effective_mass() / PLANCK_SI * (1. + 2. * self.valley().nonparabolicity * e_nonparab_before) * a[1],
+            self.valley().effective_mass() / PLANCK_SI * (1. + 2. * self.valley().nonparabolicity * e_nonparab_before) * a[2],
+        ];
+
+        self.k = [
+            self.k[0] + t * k_acceleration[0],
+            self.k[1] + t * k_acceleration[1],
+            self.k[2] + t * k_acceleration[2],
+        ];
+        self.pos = [
+            self.pos[0] + v[0] * t + a[0] * t.powi(2) / 2.,
+            self.pos[1] + v[1] * t + a[1] * t.powi(2) / 2.,
+            self.pos[2] + v[2] * t + a[2] * t.powi(2) / 2.,
+        ];
+
+        FlightResult {
+            free_flight_time: t,
+            k_acceleration,
+        }
+    }
+
+    pub fn scatter<R: Rng>(&mut self, info: &StepInfo, rng: &mut R) -> Option<ScatteringMechanism<'sc, R>> {
+        let mechs = Electron::all_mechanisms();
+        let Γ = mechs.iter().map(|m| (m.maximum_rate)(&self, info.maximum_assumed_energy)).sum::<f64>();
+
+        let mut r = Γ * rng.random_range(0. ..= 1.);
+        for mech in mechs {
+            let prob = (mech.rate)(&self);
+            r -= prob;
+            if r < 0. {
+                // This event happened!
+                *self = (mech.resulting_state)(&self, rng);
+                return Some(mech);
+            }
+        }
+        None
+    }
+}
