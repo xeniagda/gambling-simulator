@@ -32,7 +32,7 @@ impl Valley {
     // What k vector magnitude for getting a specific energy in this valley
     pub fn kmag_for_e(&self, e: f64) -> f64 {
         let spherical_energy = e * (1. + self.nonparabolicity * e);
-        (spherical_energy * 2. * self.effective_mass()).sqrt() / PLANCK_SI
+        (spherical_energy * 2. * self.effective_mass()).sqrt() / PLANCK_BAR_SI
     }
 
 }
@@ -140,7 +140,7 @@ impl<'sc> Electron<'sc> {
     pub fn energy(&self) -> f64 {
         let valley = self.valley();
         // all local variables in SI units
-        let spherical_energy = PLANCK_SI.powi(2) * self.k_mag2() / (2. * valley.effective_mass());
+        let spherical_energy = PLANCK_BAR_SI.powi(2) * self.k_mag2() / (2. * valley.effective_mass());
         (-1. + (1. + 4. * spherical_energy * valley.nonparabolicity).sqrt()) / (2. * valley.nonparabolicity)
     }
 
@@ -152,7 +152,7 @@ impl<'sc> Electron<'sc> {
     pub fn velocity(&self) -> [f64; 3] {
         let energy = self.energy();
         let nonparab = 1. + 2. * self.valley().nonparabolicity * energy;
-        let f = PLANCK_SI / self.valley().effective_mass() * nonparab;
+        let f = PLANCK_BAR_SI / self.valley().effective_mass() * nonparab;
         [f * self.k[0], f * self.k[1], f * self.k[2]]
     }
 }
@@ -324,7 +324,7 @@ impl<'sc> Electron<'sc> {
         let valley = self.valley();
         let E = E.unwrap_or_else(|| self.energy());
         2f64.sqrt() * valley.effective_mass().powf(1.5) * BOLTZMANN * self.sc.temperature * self.sc.acoustic_deformation_potential.powi(2)
-            / (PI * PLANCK_SI.powi(4) * self.sc.sound_velocity.powi(2) * self.sc.density)
+            / (PI * PLANCK_BAR_SI.powi(4) * self.sc.sound_velocity.powi(2) * self.sc.density)
             * E.sqrt() * (1. + 2. * E * valley.nonparabolicity) * (1. + E * valley.nonparabolicity).sqrt()
     }
 
@@ -359,7 +359,7 @@ impl<'sc> Electron<'sc> {
 
 
         N_op_eff * ELECTRON_CHARGE.powi(2) * valley.effective_mass().sqrt() * valley.optical_phonon_energy
-            / (2f64.sqrt() * PLANCK_SI.powi(2) * (4. * PI * EPS0))
+            / (2f64.sqrt() * PLANCK_BAR_SI.powi(2) * (4. * PI * EPS0))
             * (1. / self.sc.dielectric_hf - 1. / self.sc.dielectric_static)
             * (1. + 2. * α * E_) / γE.sqrt()
             * F0
@@ -387,7 +387,7 @@ impl<'sc> Electron<'sc> {
         let N_op_eff = if ty == PhononType::Emission { N_op + 1. } else { N_op };
 
         N_op_eff * n_dest_valleys as f64 * this_valley.effective_mass().powf(1.5) * self.sc.intervalley_deformation_potential.powi(2) * E_.sqrt()
-            / (2f64.sqrt() * PI * self.sc.density * PLANCK_SI.powi(2) * phonon_energy)
+            / (2f64.sqrt() * PI * self.sc.density * PLANCK_BAR_SI.powi(2) * phonon_energy)
     }
 }
 
@@ -426,12 +426,13 @@ impl<'sc> Electron<'sc> {
             -ELECTRON_CHARGE * info.applied_field[2] / self.valley().effective_mass(),
         ];
         let v = self.velocity();
-        let e_nonparab_before = PLANCK_SI.powi(2) * self.k_mag() / (2. * self.valley().effective_mass());
+        let e_nonparab_before = PLANCK_BAR_SI.powi(2) * self.k_mag() / (2. * self.valley().effective_mass());
+        let accel_factor = 1. + 2. * self.valley().nonparabolicity * e_nonparab_before;
 
         let k_acceleration = [
-            self.valley().effective_mass() / PLANCK_SI * (1. + 2. * self.valley().nonparabolicity * e_nonparab_before) * a[0],
-            self.valley().effective_mass() / PLANCK_SI * (1. + 2. * self.valley().nonparabolicity * e_nonparab_before) * a[1],
-            self.valley().effective_mass() / PLANCK_SI * (1. + 2. * self.valley().nonparabolicity * e_nonparab_before) * a[2],
+            self.valley().effective_mass() / PLANCK_BAR_SI * accel_factor * a[0],
+            self.valley().effective_mass() / PLANCK_BAR_SI * accel_factor * a[1],
+            self.valley().effective_mass() / PLANCK_BAR_SI * accel_factor * a[2],
         ];
 
         self.k = [

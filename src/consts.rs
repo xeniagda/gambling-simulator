@@ -1,6 +1,6 @@
 /// Reduced Planck constant hbar in J⋅s
 #[allow(unused)]
-pub const PLANCK_SI: f64 = 1.054571817e-34;
+pub const PLANCK_BAR_SI: f64 = 1.054571817e-34;
 // J/K
 #[allow(unused)]
 pub const BOLTZMANN: f64 = 1.38049e-23;
