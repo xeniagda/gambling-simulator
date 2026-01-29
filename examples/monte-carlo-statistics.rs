@@ -1,18 +1,18 @@
 #![allow(non_snake_case, mixed_script_confusables)] // for band names such as Γ and L etc
 
-use gambling_simulator::{consts::{EV_TO_J, J_TO_EV, PLANCK_SI}, semiconductor::{Electron, Semiconductor, StepInfo}};
+use gambling_simulator::{consts::{EV_TO_J, J_TO_EV, PLANCK_BAR_SI}, semiconductor::{Electron, Semiconductor, StepInfo}};
 
 use plotly::{common::{Line, Marker}, layout::Axis, Layout, Plot, Scatter};
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 mod common;
-use common::{write_plots, VALLEY_COLORS};
+use common::{write_plots, VALLEY_COLORS, Histogram, UnitBinner, DiscreteBinner, Binner2D};
 use tqdm::tqdm;
 
 struct Histograms {
-    energy_histograms: Vec<Vec<usize>>, // [valley_idx][energy_idx]
+    energy_histograms: Vec<Vec<usize>>, // Per valley_idx
     mech_histograms: Vec<Vec<usize>>, // [valley_idx][mech_idx], mech_idx = 0 = scattering, mech_idx+1 = from mechanisms
-    velocity_histogram: Vec<usize>, // [vel_idx]
+    velocity_histogram: Vec<usize>,
 }
 fn generate_histogram(
     thread_idx: usize,
@@ -52,9 +52,9 @@ fn generate_histogram(
             }
 
             let v = electron.velocity();
-            let histogram_idx = ((v[0] / velocity_histogram_step).round() + n_v as f64) as usize;
-            if histogram_idx < velocity_histogram.len() {
-                velocity_histogram[histogram_idx] += 1;
+            let histogram_idx = ((v[0] / velocity_histogram_step).round() + n_v as f64).floor();
+            if histogram_idx >= 0. && histogram_idx < velocity_histogram.len() as f64 {
+                velocity_histogram[histogram_idx as usize] += 1;
             }
 
             // Step electron
@@ -62,7 +62,7 @@ fn generate_histogram(
             let mut mech_idx = 0;
             if let Some(mech) = electron.scatter(&step_info, &mut rng) {
                 // Find index of mechanism
-                mech_idx = mechs.iter().position(|other| other.name_short == mech.name_short).expect("Unknown mechanism");
+                mech_idx = 1 + mechs.iter().position(|other| other.name_short == mech.name_short).expect("Unknown mechanism");
             }
             mech_histograms[electron.valley_idx][mech_idx] += 1;
         }
@@ -75,7 +75,7 @@ fn main() {
     let Γ_valley_idx = sample_sc.valleys.iter().position(|x| x.name == "Γ").expect("No Γ valley in GaAs");
 
     let energy_max = 2. * EV_TO_J;
-    let e_x = 2.; // kV/cm
+    let e_x = 4.; // kV/cm
 
     let step_info = StepInfo {
         applied_field: [e_x * 1e3 * 1e2, 0., 0.],
@@ -86,13 +86,13 @@ fn main() {
     let n_e = (energy_max / energy_histogram_step).ceil() as usize;
 
     let k_at_emax = sample_sc.valleys[Γ_valley_idx].kmag_for_e(energy_max);
-    let v_at_emax = PLANCK_SI / sample_sc.valleys[Γ_valley_idx].effective_mass() * k_at_emax;
+    let v_at_emax = PLANCK_BAR_SI / sample_sc.valleys[Γ_valley_idx].effective_mass() * k_at_emax;
     let v_step = v_at_emax / 1000.;
     let n_v = (v_at_emax / v_step).ceil() as usize;
 
     let n_electrons = 100;
     let n_steps = 50000;
-    let n_threads = 16;
+    let n_threads = num_cpus::get();
     let n_points = n_electrons * n_steps * n_threads;
 
     let histograms: Histograms = std::thread::scope(|scope| {
@@ -155,7 +155,6 @@ fn main() {
     let lin_mean_vel = -gaas_mobility * step_info.applied_field[0];
     eprintln!("  (should be {:.4} 10^7 cm/s)", lin_mean_vel / 1e5);
 
-
     let mut plot_histo_e = Plot::new();
     for ((valley_idx, valley), energy_histogram) in sample_sc.valleys.iter().enumerate().zip(histograms.energy_histograms) {
         let histo_e = Scatter::new(
@@ -182,7 +181,9 @@ fn main() {
             )
             .mode(plotly::common::Mode::Markers)
             .name(valley.name)
+            .text_array(mech_histogram.iter().map(|&count| format!("{:.2}%", 100. * count as f64 / n_points as f64)).collect::<Vec<_>>())
             .marker(Marker::new().size(10).color(VALLEY_COLORS[valley_idx]));
+
         plot_histo_mechs.add_trace(histo_mech);
     }
     let mut names = mechs.iter().map(|mech| mech.name_short).collect::<Vec<_>>();
@@ -193,7 +194,7 @@ fn main() {
     plot_histo_mechs.set_layout(
         Layout::new()
             .width(1200).height(800)
-            .title("Path")
+            .title(format!(r"$\text{{Mechanisms}}, E_x = {} kV/cm$", step_info.applied_field[0] / 1e5))
             .x_axis(
                 Axis::new().title("Mechanism")
                     .tick_values((0..mechs.len()+1).map(|x| x as f64).collect())
@@ -210,7 +211,7 @@ fn main() {
     plot_histo_e.set_layout(
         Layout::new()
             .width(1200).height(800)
-            .title("Energies")
+            .title(format!(r"$\text{{Energies}}, E_x = {} kV/cm$", step_info.applied_field[0] / 1e5))
             .x_axis(
                 Axis::new().title("$E [meV]$")
             )
@@ -222,7 +223,7 @@ fn main() {
     plot_histo_v.set_layout(
         Layout::new()
             .width(1200).height(800)
-            .title("Velocities")
+            .title(format!(r"$\text{{Velocities}}, E_x = {} kV/cm$", step_info.applied_field[0] / 1e5))
             .x_axis(
                 Axis::new().title("$v_x [Mm/s]$")
             )
@@ -231,5 +232,5 @@ fn main() {
             )
     );
 
-    write_plots("monte-carlo", "simple-zero-dim-field", [plot_histo_e, plot_histo_v, plot_histo_mechs]);
+    write_plots("monte-carlo", "statistics", [plot_histo_e, plot_histo_v, plot_histo_mechs]);
 }

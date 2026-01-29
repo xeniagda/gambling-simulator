@@ -1,8 +1,8 @@
 #![allow(non_snake_case, mixed_script_confusables)] // for band names such as Γ and L etc
 
-use gambling_simulator::{consts::{EV_TO_J, PLANCK_SI}, semiconductor::{Electron, Semiconductor, StepInfo}};
+use gambling_simulator::{consts::{EV_TO_J, PLANCK_BAR_SI}, semiconductor::{Electron, Semiconductor, StepInfo}};
 
-use plotly::{common::{Line, Marker, Mode}, layout::Axis, Layout, Plot, Scatter};
+use plotly::{common::{Line, Marker, MarkerSymbol, Mode}, layout::Axis, Layout, Plot, Scatter};
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 mod common;
@@ -15,10 +15,10 @@ fn main() {
     let Γ_valley_idx = sample_sc.valleys.iter().position(|x| x.name == "Γ").expect("No Γ valley in GaAs");
 
     let energy_max = 2. * EV_TO_J;
-    let e_x = 3e3; // V/cm
+    let e_x = 4.0; // kV/cm
 
     let step_info = StepInfo {
-        applied_field: [e_x * 1e2, 0., 0.],
+        applied_field: [e_x * 1e5, 0., 0.],
         maximum_assumed_energy: energy_max,
     };
 
@@ -57,9 +57,9 @@ fn main() {
         let dts = linspace_incl(0., res.free_flight_time, 5);
         let v = el_before.velocity();
         let a = [
-            PLANCK_SI / electron.valley().effective_mass() * res.k_acceleration[0],
-            PLANCK_SI / electron.valley().effective_mass() * res.k_acceleration[1],
-            PLANCK_SI / electron.valley().effective_mass() * res.k_acceleration[2],
+            PLANCK_BAR_SI / electron.valley().effective_mass() * res.k_acceleration[0],
+            PLANCK_BAR_SI / electron.valley().effective_mass() * res.k_acceleration[1],
+            PLANCK_BAR_SI / electron.valley().effective_mass() * res.k_acceleration[2],
         ];
 
         let color = VALLEY_COLORS[electron.valley_idx];
@@ -110,7 +110,7 @@ fn main() {
                     vec![electron.pos[1] / sample_sc.lattice_constant],
                 )
                 .mode(Mode::Markers)
-                .marker(Marker::new().color("red"))
+                .marker(Marker::new().color("red").symbol(MarkerSymbol::X))
                 .name(format!("{} ({:.4} meV before)", mech.name_short, el_before.energy_eV() * 1e3));
             plot_traces.add_trace(scatter);
         }
@@ -122,7 +122,7 @@ fn main() {
     plot_traces.set_layout(
         Layout::new()
             .width(1200).height(800)
-            .title("Path")
+            .title(format!(r"$\text{{Path}}, E_x = {} kV/cm$", step_info.applied_field[0] / 1e5))
             .x_axis(
                 Axis::new().title("$x [a]$")
             )

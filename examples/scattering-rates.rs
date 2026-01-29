@@ -32,6 +32,7 @@ fn main() {
             sc: &sample_sc,
             valley_idx,
             k: [kx, 0., 0.],
+            pos: [0., 0., 0.],
         }).collect::<Vec<_>>();
 
         if let Some(max_energy) = electrons.iter().map(|e| e.energy_eV()).max_by(f64::total_cmp) {
@@ -50,8 +51,6 @@ fn main() {
                 .name(name.to_owned())
             );
             eprint!("  {name:>40}: ");
-
-
 
             // Find maximum
             let Some((max_e, max_rate)) = electrons
@@ -79,6 +78,12 @@ fn main() {
             "Intra ac. phonon em./abs.",
             Box::new(|e| e.rate_intra_ac_phonon(None)),
             (Mode::Lines, DashType::Solid, "blue"),
+        );
+
+        plot_rate_funtion(
+            "Impurity scattering",
+            Box::new(|e| e.rate_impurity(None)),
+            (Mode::Lines, DashType::Solid, "green"),
         );
 
         for (ty, name, col) in [(PhononType::Emission, "em", "red"), (PhononType::Absorption, "abs", "purple")] {
