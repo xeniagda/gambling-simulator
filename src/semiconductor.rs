@@ -74,14 +74,14 @@ impl Semiconductor {
             energy: 1.42 * EV_TO_J,
             nonparabolicity: 0.61 / EV_TO_J,
             optical_phonon_energy: 36.13e-3 * EV_TO_J,
-            intervalley_phonon_energy: vec![27.8e-3 * EV_TO_J, 27.8e-3 * EV_TO_J, 29.3e-3 * EV_TO_J].into_boxed_slice(),
+            intervalley_phonon_energy: vec![0., 27.8e-3 * EV_TO_J, 29.3e-3 * EV_TO_J].into_boxed_slice(),
         };
         let L_xyz = 1.61993 / a;
         let L = Valley {
             name: "L",
             k_center: vec![[L_xyz, L_xyz, L_xyz,], [-L_xyz, L_xyz, L_xyz,], [L_xyz, -L_xyz, L_xyz,], [L_xyz, L_xyz, -L_xyz,]].into(),
             effective_mass_to_m0: 0.3,
-            energy: 1.71 * EV_TO_J,
+            energy: 1.729 * EV_TO_J,
             nonparabolicity: 0.222 / EV_TO_J,
             optical_phonon_energy: 36.13e-3 * EV_TO_J,
             intervalley_phonon_energy: vec![27.8e-3 * EV_TO_J, 27.8e-3 * EV_TO_J, 29.3e-3 * EV_TO_J].into_boxed_slice(),
@@ -94,7 +94,7 @@ impl Semiconductor {
             name: "X",
             k_center: vec![[X_xyz, 0., 0.,], [0., X_xyz, 0.,], [0., 0., X_xyz,]].into(),
             effective_mass_to_m0: 0.85,
-            energy: 1.90 * EV_TO_J,
+            energy: 1.906 * EV_TO_J,
             nonparabolicity: 0.061 / EV_TO_J,
             optical_phonon_energy: 36.13e-3 * EV_TO_J,
             intervalley_phonon_energy: vec![29.3e-3 * EV_TO_J, 29.3e-3 * EV_TO_J, 29.3e-3 * EV_TO_J].into_boxed_slice(),
@@ -394,6 +394,9 @@ impl<'sc> Electron<'sc> {
         let n_dest_valleys = dest_valley.k_center.len();
         // can't scatter into ourselves bozo
         let n_dest_valleys = if destination_valley_idx == self.valley_idx { n_dest_valleys - 1 } else { n_dest_valleys };
+        if n_dest_valleys == 0 {
+            return 0.0;
+        }
 
         let N_op = 1./(-1. + (this_valley.optical_phonon_energy / (BOLTZMANN * self.sc.temperature)).exp());
         let N_op_eff = if ty == PhononType::Emission { N_op + 1. } else { N_op };
@@ -439,7 +442,7 @@ impl<'sc> Electron<'sc> {
         // Free flight
         let Γ = mechs.iter().map(|m| (m.maximum_rate)(&self, info.maximum_assumed_energy)).sum::<f64>();
         // TODO: f64::EPSILON is not the smallest number that we can ln without getting zero. find it
-        let t = -1./Γ * (rng.random_range(0. ..= 1.) + f64::EPSILON).ln();
+        let t = -1./Γ * rng.random_range(0f64 ..= 1f64).ln();
 
         // Calculate
         let a = [
