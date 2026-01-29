@@ -57,6 +57,9 @@ pub struct Semiconductor {
     pub acoustic_deformation_potential: f64,
     /// in J/m
     pub intervalley_deformation_potential: f64,
+
+    /// in m^-3
+    pub impurity_density: f64,
 }
 
 impl Semiconductor {
@@ -106,6 +109,7 @@ impl Semiconductor {
             dielectric_hf: 10.82,
             acoustic_deformation_potential: 7.0 * EV_TO_J,
             intervalley_deformation_potential: 1.0e9 * EV_TO_J * 100.,
+            impurity_density: 1.0e17 * 1e6, // 1e17 cm^-3, same value as in [multipliers-and-mixers-2014]
         }
     }
 }
@@ -204,13 +208,21 @@ impl<'sc> Electron<'sc> {
             // For absorption we gain energy from the phonon
             resulting_state: |e, r| e.scatter_mag2(r, e.energy() - e.valley().optical_phonon_energy),
         };
-        let mut mechanisms = vec![intra_ac_phonon, intra_opt_phonon_abs, intra_opt_phonon_em];
+        let impurity = ScatteringMechanism {
+            name_full: "Impurity scattering",
+            name_short: "imp.",
+            rate: |e| e.rate_impurity(None),
+            // Strictly increasing
+            maximum_rate: |el, en| el.rate_impurity(Some(en)),
+            resulting_state: |e, r| e.scatter_isotropic(r, e.energy()),
+        };
+        let mut mechanisms = vec![intra_ac_phonon, intra_opt_phonon_abs, intra_opt_phonon_em, impurity];
 
         macro_rules! gen_intervalley {
             ($dest_valley_idx:expr, $name:expr) => {
                 let inter_opt_phonon_abs = ScatteringMechanism {
                     name_full: concat!("Intervalley optical phonon absorption to ", $name),
-                    name_short: concat!("inter →", $name, " opt. phonon em"),
+                    name_short: concat!("inter →", $name, " opt. phonon abs"),
                     rate: |e| e.rate_inter_opt_phonon(PhononType::Absorption, $dest_valley_idx, None),
                     // Strictly increasing
                     maximum_rate: |el, en| el.rate_inter_opt_phonon(PhononType::Absorption, $dest_valley_idx, Some(en)),
@@ -388,6 +400,16 @@ impl<'sc> Electron<'sc> {
 
         N_op_eff * n_dest_valleys as f64 * this_valley.effective_mass().powf(1.5) * self.sc.intervalley_deformation_potential.powi(2) * E_.sqrt()
             / (2f64.sqrt() * PI * self.sc.density * PLANCK_BAR_SI.powi(2) * phonon_energy)
+    }
+
+    // Indep. of k', E' = E
+    // From [monte-carlo-book-1989.pdf], CW approach
+    pub fn rate_impurity(&self, E: Option<f64>) -> f64 {
+        let impurity_mean_dist = (3. / (4. * PI * self.sc.impurity_density)).powf(1./3.);
+        let charge_per_impurity: f64 = 1.0; // assumed. how to investigate?
+        let E = E.unwrap_or_else(|| self.energy());
+
+        PI * self.sc.impurity_density * charge_per_impurity.powi(2) * impurity_mean_dist.powi(2) * (2. / self.valley().effective_mass()).sqrt() * E.sqrt()
     }
 }
 
