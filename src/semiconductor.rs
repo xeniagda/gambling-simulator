@@ -128,6 +128,33 @@ pub struct Electron<'sc> {
 }
 
 impl<'sc> Electron<'sc> {
+    // electron with average temperature of the lattice
+    pub fn thermalized<R: Rng>(rng: &mut R, sc: &'sc Semiconductor, valley_idx: usize, pos: [f64; 3]) -> Self {
+        let valley = &sc.valleys[valley_idx];
+        let var = BOLTZMANN * sc.temperature / valley.effective_mass();
+
+        // TODO: Sample normal distribution instead of uniform
+        //
+        // [a, b] has var 1/12(b-a)^2
+        // [-a, a] has var 1/12(2a)^2 = 1/3 a^2
+        // a = 3sqrt(var)
+
+        let distr = rand_distr::Normal::new(0., var.sqrt()).unwrap();
+        let vx = rng.sample(&distr);
+        let vy = rng.sample(&distr);
+        let vz = rng.sample(&distr);
+
+
+        let vtok = valley.effective_mass() / PLANCK_BAR_SI;
+
+        Electron {
+            sc,
+            valley_idx,
+            k: [vtok * vx, vtok * vy, vtok * vz],
+            pos,
+        }
+    }
+
     pub fn valley(&self) -> &Valley {
         &self.sc.valleys[self.valley_idx]
     }
