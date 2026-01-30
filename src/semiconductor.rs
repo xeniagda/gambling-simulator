@@ -109,7 +109,7 @@ impl Semiconductor {
             dielectric_hf: 10.82,
             acoustic_deformation_potential: 7.0 * EV_TO_J,
             intervalley_deformation_potential: 1.0e9 * EV_TO_J * 100.,
-            impurity_density: 1.0e17 * 1e6, // 1e17 cm^-3, same value as in [multipliers-and-mixers-2014]
+            impurity_density: 1.0e12 * 1e6, // 1e17 cm^-3, value as in [multipliers-and-mixers-2014]
         }
     }
 }

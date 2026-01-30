@@ -15,7 +15,7 @@ fn main() {
     let Γ_valley_idx = sample_sc.valleys.iter().position(|x| x.name == "Γ").expect("No Γ valley in GaAs");
 
     let energy_max = 2. * EV_TO_J;
-    let e_x = 4.0; // kV/cm
+    let e_x = 0.0; // kV/cm
 
     let step_info = StepInfo {
         applied_field: [e_x * 1e5, 0., 0.],

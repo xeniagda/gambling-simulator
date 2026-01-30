@@ -2,103 +2,99 @@
 
 use gambling_simulator::{consts::EV_TO_J, semiconductor::{Electron, Semiconductor, StepInfo}};
 
-use plotly::{color::Rgb, common::{DashType, Line, Marker, Mode}, layout::Axis, Layout, Plot, Scatter};
+use plotly::{common::{DashType, Line, Mode}, layout::Axis, Layout, Plot, Scatter};
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 mod common;
-use common::write_plots;
+use common::{write_plots, Binner, Binner2D, Histogram, UnitBinner};
 use tqdm::tqdm;
 
-struct Histograms {
-    velocity_histograms: Vec<Vec<usize>>, // [field_idx][vel_idx] (vel_idx = n_velocity is zero-velocity, 2*n_velocity+1 items)
-}
-impl Histograms {
-    fn combine(&mut self, other: Histograms) {
-        for (my_hist, other_hist) in self.velocity_histograms.iter_mut().zip(other.velocity_histograms.into_iter()) {
-            for (my_item, other_item) in my_hist.iter_mut().zip(other_hist.into_iter()) {
-                *my_item += other_item;
-            }
-        }
-    }
-}
+type VelocityHistogram = Histogram<Binner2D<UnitBinner, UnitBinner>>; // y = field strength, x = velocity
 
 fn generate_histogram(
     thread_idx: usize,
     sc: Semiconductor,
+
+    mut histo: VelocityHistogram,
     mut step_info: StepInfo, // applied_field overwritten
 
-    (efield_max, n_efield): (f64, usize),
-    (velocity_max, n_velocity): (f64, usize),
-
     n_electrons: usize,
-    n_steps: usize,
-) -> Histograms {
+    t_stop: f64,
+) -> VelocityHistogram {
     let mut rng = ChaCha8Rng::from_os_rng();
 
     let Γ_valley_idx = sc.valleys.iter().position(|x| x.name == "Γ").expect("No Γ valley in GaAs");
 
-    let mut velocity_histograms: Vec<Vec<usize>> = (0..n_efield).map(|_| (0..2*n_velocity+1).map(|_| 0usize).collect()).collect();
-    let velocity_histogram_step = velocity_max / n_velocity as f64;
 
-    for efield_idx in tqdm(0..n_efield).desc(Some(format!("Thread #{thread_idx: <4}"))) {
-        let efield = efield_max * efield_idx as f64 / n_efield as f64;
+    for efield in tqdm(histo.binner.bx.items()).desc(Some(format!("Thread #{thread_idx: <4}"))) {
         step_info.applied_field = [efield, 0., 0.,];
 
         for _run in 0..n_electrons {
-            let mut electron = Electron {
-                sc: &sc,
-                valley_idx: Γ_valley_idx,
-                k: [0., 0., 0.,],
-                pos: [0., 0., 0.,],
-            };
-            for _ in 0..n_steps {
-                // Set histogram
-                let v = electron.velocity();
-                let histogram_idx = ((v[0] / velocity_histogram_step).round() + n_velocity as f64).floor();
-                if histogram_idx >= 0. && histogram_idx < velocity_histograms[efield_idx].len() as f64 {
-                    velocity_histograms[efield_idx][histogram_idx as usize] += 1;
-                }
+            let mut electron = Electron::thermalized(&mut rng, &sc, Γ_valley_idx, [0., 0., 0.]);
+            let mut t = 0.;
 
+            while t < t_stop {
                 // Step electron
-                electron.free_flight(&step_info, &mut rng);
+                let vx_previous = electron.velocity()[0];
+                let flight = electron.free_flight(&step_info, &mut rng);
+                t += flight.free_flight_time;
                 electron.scatter(&step_info, &mut rng);
+
+                // Set histogram
+                let vx_now = electron.velocity()[0];
+
+                let n = 100;
+                for i in 0..n {
+                    let alpha = i as f64 / n as f64;
+                    let vx = vx_previous * alpha + vx_now * (1. - alpha);
+                    histo.add_value((efield, vx), t);
+                }
             }
         }
     }
-    Histograms { velocity_histograms }
+    histo
 }
 
 fn main() {
     let sample_sc = Semiconductor::GaAs(300.0);
 
     let energy_max = 2. * EV_TO_J;
-    let e_x_max = 10.; // kV/cm
-    let efield_max = e_x_max * 1e3 * 1e2; // V/m
 
     let step_info = StepInfo {
         applied_field: [0., 0., 0.], // will be overwritten
         maximum_assumed_energy: energy_max,
     };
 
-    // good bounds for velocity
-    // let k_at_emax = sample_sc.valleys[Γ_valley_idx].kmag_for_e(energy_max);
-    // let v_at_emax = PLANCK_SI / sample_sc.valleys[Γ_valley_idx].effective_mass() * k_at_emax;
-    let v_at_emax = 20.0e5f64;
-    let v_step = v_at_emax / 100.;
-    let n_v = (v_at_emax / v_step).ceil() as usize;
+    let histo = VelocityHistogram::new(
+        "velocity".to_string(),
+        Binner2D {
+            bx: UnitBinner {
+                unit: common::UNIT_KV_CM,
+                start_unit: 0.,
+                end_unit: 30.,
+                count: 60,
+            },
+            by: UnitBinner {
+                unit: common::UNIT_10_7_CM_S,
+                start_unit: -20.,
+                end_unit: 20.,
+                count: 200,
+            },
+        }
+    );
 
-    let n_electrons = 10;
-    let n_steps = 5000;
-    let n_efields = 60;
+    let n_electrons = 40;
+    let t_stop = 4e-12;
     let n_threads = num_cpus::get();
-    let n_points = n_electrons * n_steps * n_threads;
 
-    let histograms: Histograms = std::thread::scope(|scope| {
-        let mut histograms: Option<Histograms> = None;
+    let histo: VelocityHistogram = std::thread::scope(|scope| {
+        let mut histo = histo;
+
         let mut handles = (0..n_threads).map(|thread_idx| {
             let sample_sc = sample_sc.clone();
+            let histo = histo.new_worker();
             let handle = scope.spawn(move || {
-                generate_histogram(thread_idx, sample_sc, step_info, (efield_max, n_efields), (v_at_emax, n_v), n_electrons, n_steps)
+                generate_histogram(thread_idx, sample_sc, histo, step_info, n_electrons, t_stop)
             });
             (handle, thread_idx)
         }).collect::<Vec<_>>();
@@ -114,54 +110,31 @@ fn main() {
                 continue;
             };
 
-            if let Some(ref mut h) = histograms {
-                // TODO: This is not particularily efficient lmao
-                h.combine(thread_hist);
-            } else {
-                histograms = Some(thread_hist);
-            };
+            histo.merge_worker(thread_hist);
         }
-        histograms.unwrap()
+        histo
     });
 
     let mut plot_histo_v = Plot::new();
-    let start_color = [0., 0., 255.];
-    let end_color = [255., 128., 0.];
 
-    let bump_size = 1.; // kV/cm / (rel-count/10^7cm/s)
-    for efield_idx in 0..n_efields {
-        let histo = &histograms.velocity_histograms[efield_idx];
-        let efield = efield_max * efield_idx as f64 / n_efields as f64;
+    for (efield_idx, efield) in histo.binner.bx.items().into_iter().enumerate() {
+        let n_efields = histo.binner.bx.count();
 
-        let color = [
-            start_color[0] + (end_color[0] - start_color[0]) * (efield_idx as f64 / n_efields as f64),
-            start_color[1] + (end_color[1] - start_color[1]) * (efield_idx as f64 / n_efields as f64),
-            start_color[2] + (end_color[2] - start_color[2]) * (efield_idx as f64 / n_efields as f64),
-        ];
-        let color = Rgb::new(color[0] as u8, color[1] as u8, color[2] as u8);
+        let color = common::COLOR_GRADIENT_STANDARD.get(efield_idx as f64 / n_efields as f64);
+
+        let vels = histo.binner.by.items();
+
+        let total_for_field = vels.iter().map(|&vel| histo.get_count((efield, vel))).sum::<f64>();
 
         let histo_v = Scatter::new(
-                (0..histo.len()).map(|idx| (idx as f64 - n_v as f64) * v_step / 1e5).collect(),
-                histo.iter().map(|&count| count as f64 / n_points as f64 / (v_step / 1e6) * bump_size + efield / 1e5).collect(),
+                vels.iter().map(|&x| x / histo.binner.by.unit.1).collect(),
+                vels.iter().map(|&vel| histo.get_count((efield, vel)) / total_for_field).collect(),
             )
             .mode(Mode::Lines)
+            .name(format!("E_x = {:.3} kV/cm", efield / histo.binner.bx.unit.1))
             .line(Line::new().color(color));
 
-        let integrated_v = histo.iter()
-            .enumerate()
-            .map(|(idx, &count)| (idx as f64 - n_v as f64) * v_step / 1e5 * count as f64)
-            .sum::<f64>();
-        let mean_v = integrated_v / histo.iter().sum::<usize>() as f64;
-        let max_count = histo.iter().map(|&count| count as f64 / n_points as f64 / (v_step / 1e6) * bump_size + efield / 1e5).max_by(f64::total_cmp).unwrap();
-
-        let point = Scatter::new(
-                vec![mean_v], vec![max_count],
-            )
-            .mode(Mode::Markers)
-            .marker(Marker::new().size(10).color(color));
-
         plot_histo_v.add_trace(histo_v);
-        plot_histo_v.add_trace(point);
     }
     plot_histo_v.set_layout(
         Layout::new()
@@ -170,21 +143,24 @@ fn main() {
             .x_axis(
                 Axis::new().title("$v_x [10^7 cm/s]$")
             )
-            .y_axis(
-                Axis::new().title("$E_x [kV/cm]$")
-            )
+            // .y_axis(
+            //     Axis::new().title("$E_x [kV/cm]$")
+            // )
     );
 
     let ideal_mobility = 6500.0; // cm² / Vs
     let mut plot_velocity = Plot::new();
-    let mobility_points = histograms.velocity_histograms.iter().enumerate().map(|(efield_idx, velocity_histogram)| {
-        let efield = efield_max * efield_idx as f64 / n_efields as f64;
+    let mobility_points = histo.binner.bx.items().into_iter().map(|efield| {
+        let vels = histo.binner.by.items();
 
-        let integrated_v = velocity_histogram.iter()
-            .enumerate()
-            .map(|(idx, &count)| (idx as f64 - n_v as f64) * v_step * count as f64)
+        let integrated_v = vels.iter()
+            .map(|&vel| vel * histo.get_count((efield, vel)))
             .sum::<f64>();
-        let mean_v = integrated_v / velocity_histogram.iter().sum::<usize>() as f64;
+        let total_time = vels.iter()
+            .map(|&vel| histo.get_count((efield, vel)))
+            .sum::<f64>();
+
+        let mean_v = integrated_v / total_time;
 
         // rough fit from https://www.ioffe.ru/SVA/NSM/Semicond/GaAs/Figs/437.gif
         let ideal_v_lin = ideal_mobility/1e4 * efield; // from bulk low-field mobility
@@ -196,7 +172,7 @@ fn main() {
             (ideal_v_lin.powf(alpha) + ideal_v_sat.powf(alpha)).powf(1. / alpha)
         };
 
-        (efield / 1e5, -mean_v / 1e5, ideal_v / 1e5) // 10^7 cm/s
+        (efield / 1e5, -mean_v / histo.binner.bx.unit.1, ideal_v / histo.binner.bx.unit.1) // 10^7 cm/s
     }).collect::<Vec<_>>();
 
     let mobility_trace = Scatter::new(

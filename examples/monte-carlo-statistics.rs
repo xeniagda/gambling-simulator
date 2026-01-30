@@ -6,7 +6,7 @@ use plotly::{common::{Line, Marker}, layout::Axis, Layout, Plot, Scatter};
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 mod common;
-use common::{write_plots, VALLEY_COLORS, Histogram, UnitBinner, DiscreteBinner, Binner2D};
+use common::{write_plots, VALLEY_COLORS};
 use tqdm::tqdm;
 
 struct Histograms {
@@ -37,12 +37,7 @@ fn generate_histogram(
     let velocity_histogram_step = v_max / n_v as f64;
 
     for _run in tqdm(0..n_electrons).desc(Some(format!("Thread #{thread_idx: <4}"))) {
-        let mut electron = Electron {
-            sc: &sc,
-            valley_idx: Γ_valley_idx,
-            k: [0., 0., 0.,],
-            pos: [0., 0., 0.,],
-        };
+        let mut electron = Electron::thermalized(&mut rng, &sc, Γ_valley_idx, [0., 0., 0.]);
         for _ in 0..n_steps {
             // Set histogram
             let e = electron.energy();
@@ -75,7 +70,7 @@ fn main() {
     let Γ_valley_idx = sample_sc.valleys.iter().position(|x| x.name == "Γ").expect("No Γ valley in GaAs");
 
     let energy_max = 2. * EV_TO_J;
-    let e_x = 4.; // kV/cm
+    let e_x = 0.; // kV/cm
 
     let step_info = StepInfo {
         applied_field: [e_x * 1e3 * 1e2, 0., 0.],
@@ -90,8 +85,8 @@ fn main() {
     let v_step = v_at_emax / 1000.;
     let n_v = (v_at_emax / v_step).ceil() as usize;
 
-    let n_electrons = 100;
-    let n_steps = 50000;
+    let n_electrons = 1000;
+    let n_steps = 50;
     let n_threads = num_cpus::get();
     let n_points = n_electrons * n_steps * n_threads;
 
