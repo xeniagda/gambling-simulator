@@ -384,6 +384,7 @@ impl ColorGradient {
         }
     }
 
+    #[allow(unused)]
     pub fn get(&self, at: f64) -> plotly::color::Rgb {
         let at = (at as f32).clamp(0., 1.,);
         let start_lab = oklab::srgb_to_oklab(oklab::Rgb::new(self.start[0], self.start[1], self.start[2]));

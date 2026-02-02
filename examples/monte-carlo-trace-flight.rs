@@ -2,11 +2,11 @@
 
 use gambling_simulator::{consts::{EV_TO_J, PLANCK_BAR_SI}, semiconductor::{Electron, Semiconductor, StepInfo}};
 
-use plotly::{common::{Line, Marker, MarkerSymbol, Mode}, layout::Axis, Layout, Plot, Scatter};
+use plotly::{common::{Marker, MarkerSymbol, Mode}, layout::Axis, Layout, Plot, Scatter};
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 mod common;
-use common::{linspace_incl, write_plots, VALLEY_COLORS};
+use common::{write_plots, VALLEY_COLORS};
 
 fn main() {
     let mut rng = ChaCha8Rng::from_os_rng();
@@ -54,7 +54,7 @@ fn main() {
         );
 
         // draw continuous trace
-        let dts = linspace_incl(0., res.free_flight_time, 5);
+        // let dts = linspace_incl(0., res.free_flight_time, 5);
         let v = el_before.velocity();
         let a = [
             PLANCK_BAR_SI / electron.valley().effective_mass() * res.k_acceleration[0],

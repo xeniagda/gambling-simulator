@@ -51,6 +51,7 @@ fn main() {
                 sc: &sample_sc,
                 valley_idx: this_idx,
                 k,
+                pos: [0., 0., 0.],
             }).collect::<Vec<_>>();
 
             let dir_mul = if which == Before { 1. } else { -1. };

@@ -29,6 +29,7 @@ fn main() {
         sc: &sample_sc,
         valley_idx: Γ_valley_idx,
         k: [k_mag, 0., 0.],
+        pos: [0., 0., 0.,],
     };
 
     let mechs = Electron::all_mechanisms();
