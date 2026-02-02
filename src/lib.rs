@@ -2,3 +2,4 @@
 
 pub mod consts;
 pub mod semiconductor;
+pub mod histogram;
