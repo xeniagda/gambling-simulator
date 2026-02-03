@@ -50,9 +50,9 @@ pub struct Semiconductor {
     /// m/s
     pub sound_velocity: f64,
     /// relative dielectric constant at ω=0
-    pub dielectric_static: f64,
+    pub relative_dielectric_static: f64,
     /// relative dielectric constant as ω → ∞
-    pub dielectric_hf: f64,
+    pub relative_dielectric_hf: f64,
     /// in J
     pub acoustic_deformation_potential: f64,
     /// in J/m
@@ -105,11 +105,11 @@ impl Semiconductor {
             lattice_constant: a,
             density: 5.37 * 1000.,
             sound_velocity: 5220.,
-            dielectric_static: 12.53,
-            dielectric_hf: 10.82,
+            relative_dielectric_static: 12.53,
+            relative_dielectric_hf: 10.82,
             acoustic_deformation_potential: 7.0 * EV_TO_J,
-            intervalley_deformation_potential: 1.0e9 * EV_TO_J * 100.,
-            impurity_density: 1.0e12 * 1e6, // 1e17 cm^-3, value as in [multipliers-and-mixers-2014]
+            intervalley_deformation_potential: 1.0e9 * EV_TO_J * 100., // 1e9 eV/cm
+            impurity_density: 1.0e17 * 1e6, // 1e17 cm^-3 used in [multipliers-and-mixers-2014]
         }
     }
 }
@@ -185,6 +185,57 @@ impl<'sc> Electron<'sc> {
         let nonparab = 1. + 2. * self.valley().nonparabolicity * energy;
         let f = PLANCK_BAR_SI / self.valley().effective_mass() * nonparab;
         [f * self.k[0], f * self.k[1], f * self.k[2]]
+    }
+}
+
+struct CoordSystem {
+    xhat: [f64; 3],
+    yhat: [f64; 3],
+    zhat: [f64; 3],
+}
+
+impl CoordSystem {
+    fn given_z(z: [f64; 3]) -> CoordSystem {
+        let zmag = z.iter().map(|x| x.powi(2)).sum::<f64>().sqrt();
+
+        let zhat = if zmag > 0. {
+            [z[0] / zmag, z[1] / zmag, z[2] / zmag]
+        } else {
+            // Arbitrary vector
+            [1., 0., 0.]
+        };
+
+        // Define xxhat = normalize(xhat cross zzhat) or normalize(yhat cross zzhat) (depending on which is more normalizable)
+        let xhat = {
+            let x1 = [zhat[2], 0., -zhat[0]];
+            let x1mag = x1.iter().map(|x| x.powi(2)).sum::<f64>().sqrt();
+            let x2 = [0., -zhat[0], zhat[1]];
+            let x2mag = x2.iter().map(|x| x.powi(2)).sum::<f64>().sqrt();
+            let (x, xmag) = if x1mag > x2mag { (x1, x1mag) } else { (x2, x2mag) };
+            [x[0] / xmag, x[1] / xmag, x[2] / xmag]
+        };
+        // Define yyhat = normalize(xxhat cross zzhat) = xxhat cross zzhat since both are already normalized and perpendicular
+        let yhat = [
+            xhat[1] * zhat[2] - xhat[2] * zhat[1],
+            xhat[2] * zhat[0] - xhat[0] * zhat[2],
+            xhat[0] * zhat[1] - xhat[1] * zhat[0],
+        ];
+        CoordSystem {
+            xhat, yhat, zhat,
+        }
+    }
+
+    /// theta = 0 points in zhat
+    /// theta = pi/2, phi=0 points in xhat
+    fn cylidrical(&self, len: f64, theta: f64, phi: f64) -> [f64; 3] {
+        let v_zz = len * theta.cos();
+        let v_xx = len * theta.sin() * phi.cos();
+        let v_yy = len * theta.sin() * phi.sin();
+
+        let v_x = v_zz * self.zhat[0] + v_xx * self.xhat[0] + v_yy * self.yhat[0];
+        let v_y = v_zz * self.zhat[1] + v_xx * self.xhat[1] + v_yy * self.yhat[1];
+        let v_z = v_zz * self.zhat[2] + v_xx * self.xhat[2] + v_yy * self.yhat[2];
+        [v_x, v_y, v_z]
     }
 }
 
@@ -309,46 +360,20 @@ impl<'sc> Electron<'sc> {
 
     // Resulting state after a collision where the probability of a state k' is proportional to |k-k'|^⁻²
     pub fn scatter_mag2<R: Rng>(&self, rng: &mut R, res_energy: f64) -> Electron<'sc> {
+        let kmag = self.k.iter().map(|x| x.powi(2)).sum::<f64>().sqrt();
         let k_res_mag = self.valley().kmag_for_e(res_energy);
 
         // create a coordinate system with zz = k
-        let kmag = self.k_mag();
-        // Check for zero-energy electron
-        let zzhat = if kmag > 0. {
-            [self.k[0] / kmag, self.k[1] / kmag, self.k[2] / kmag]
-        } else {
-            [1., 0., 0.]
-        };
-        // Define xxhat = normalize(xhat cross zzhat) or normalize(yhat cross zzhat) (depending on which is more normalizable)
-        // TODO: If self.k is very close to x this will kinda explode
-        let xxhat = {
-            let xx1 = [zzhat[2], 0., -zzhat[0]];
-            let xx1mag = xx1.iter().map(|x| x.powi(2)).sum::<f64>().sqrt();
-            let xx2 = [0., -zzhat[0], zzhat[1]];
-            let xx2mag = xx2.iter().map(|x| x.powi(2)).sum::<f64>().sqrt();
-            let (xx, xxmag) = if xx1mag > xx2mag { (xx1, xx1mag) } else { (xx2, xx2mag) };
-            [xx[0] / xxmag, xx[1] / xxmag, xx[2] / xxmag]
-        };
-        // Define yyhat = normalize(xxhat cross zzhat) = xxhat cross zzhat since both are already normalized and perpendicular
-        let yyhat = [
-            xxhat[1] * zzhat[2] - xxhat[2] * zzhat[1],
-            xxhat[2] * zzhat[0] - xxhat[0] * zzhat[2],
-            xxhat[0] * zzhat[1] - xxhat[1] * zzhat[0],
-        ];
+        let coord_sys = CoordSystem::given_z(self.k);
 
         // Pick a point on the unit sphere weighted by |k' · zz - alpha|⁻²
         let alpha = kmag / k_res_mag;
         let r = rng.random_range(0f64..=1f64);
         let theta = ((r * (2.*alpha.powi(2) + 2.) - (alpha + 1.).powi(2)) / (4.*r*alpha - (alpha + 1.).powi(2))).acos();
         let phi = rng.random_range(0. ..= 2.*PI);
-        let k_res_zz = k_res_mag * theta.cos();
-        let k_res_xx = k_res_mag * theta.sin() * phi.cos();
-        let k_res_yy = k_res_mag * theta.sin() * phi.sin();
 
-        let k_res_x = k_res_zz * zzhat[0] + k_res_xx * xxhat[0] + k_res_yy * yyhat[0];
-        let k_res_y = k_res_zz * zzhat[1] + k_res_xx * xxhat[1] + k_res_yy * yyhat[1];
-        let k_res_z = k_res_zz * zzhat[2] + k_res_xx * xxhat[2] + k_res_yy * yyhat[2];
-        let k_res = [k_res_x, k_res_y, k_res_z];
+        let k_res = coord_sys.cylidrical(k_res_mag, theta, phi);
+
 
         Electron {
             k: k_res,
@@ -399,7 +424,7 @@ impl<'sc> Electron<'sc> {
 
         N_op_eff * ELECTRON_CHARGE.powi(2) * valley.effective_mass().sqrt() * valley.optical_phonon_energy
             / (2f64.sqrt() * PLANCK_BAR_SI.powi(2) * (4. * PI * EPS0))
-            * (1. / self.sc.dielectric_hf - 1. / self.sc.dielectric_static)
+            * (1. / self.sc.relative_dielectric_hf - 1. / self.sc.relative_dielectric_static)
             * (1. + 2. * α * E_) / γE.sqrt()
             * F0
     }
