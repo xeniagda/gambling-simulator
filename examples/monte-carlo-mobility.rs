@@ -1,7 +1,7 @@
 #![allow(non_snake_case, mixed_script_confusables)] // for band names such as Γ and L etc
 
 use gambling_simulator::{consts::EV_TO_J, semiconductor::{Electron, Semiconductor, StepInfo}};
-use gambling_simulator::histogram::{Histogram, Binner, Binner2D, UnitBinner, units};
+use gambling_simulator::histogram::{Histogram, Binner, Binner2D, UnitBinner, units, DiscreteBinner};
 
 use plotly::{common::{DashType, Line, Mode}, layout::Axis, Layout, Plot, Scatter};
 use rand::SeedableRng;
@@ -11,23 +11,27 @@ use tqdm::tqdm;
 
 use crate::common::write_plots;
 
-type VelocityHistogram = Histogram<Binner2D<UnitBinner<units::KV_PER_CM>, UnitBinner<units::TEN_MILLION_CM_PER_SECOND>>>; // y = field strength, x = velocity
+struct Histograms {
+    velocity: Histogram<Binner2D<UnitBinner<units::KV_PER_CM>, UnitBinner<units::MILLION_CM_PER_SECOND>>>,
+    mechanism: Histogram<Binner2D<UnitBinner<units::KV_PER_CM>, DiscreteBinner<&'static str>>>,
+    valley: Histogram<Binner2D<UnitBinner<units::KV_PER_CM>, DiscreteBinner<&'static str>>>,
+}
 
 fn generate_histogram(
     thread_idx: usize,
     sc: Semiconductor,
 
-    mut histo: VelocityHistogram,
+    mut histo: Histograms,
     mut step_info: StepInfo, // applied_field overwritten
 
     n_electrons: usize,
     t_stop: f64,
-) -> VelocityHistogram {
+) -> Histograms {
     let mut rng = ChaCha8Rng::from_os_rng();
 
     let Γ_valley_idx = sc.valleys.iter().position(|x| x.name == "Γ").expect("No Γ valley in GaAs");
 
-    let steps: Vec<_> = histo.binner.major.steps_si_and_unit().collect();
+    let steps: Vec<_> = histo.velocity.binner.major.steps_si_and_unit().collect();
     for (efield, _) in tqdm(steps).desc(Some(format!("Thread #{thread_idx: <4}"))) {
         step_info.applied_field = [efield, 0., 0.,];
 
@@ -39,11 +43,16 @@ fn generate_histogram(
                 // Step electron
                 let flight = electron.free_flight(&step_info, &mut rng);
                 t += flight.free_flight_time;
-                electron.scatter(&step_info, &mut rng);
+                let scatter_mech = electron.scatter(&step_info, &mut rng);
 
                 // Set histogram
                 let vx_now = electron.velocity()[0];
-                histo.add((efield, vx_now), t);
+                histo.velocity.add((efield, vx_now), t);
+
+                histo.valley.add((efield, electron.valley().name), t);
+                if let Some(mech) = scatter_mech {
+                    histo.mechanism.add((efield, mech.name_short), 1.0);
+                } // ignore self-scatters
             }
         }
     }
@@ -51,8 +60,7 @@ fn generate_histogram(
 }
 
 fn main() {
-    let mut sample_sc = Semiconductor::GaAs(300.0);
-    sample_sc.impurity_density = 1e17 * 1e6;
+    let sample_sc = Semiconductor::GaAs(300.0);
 
     let energy_max = 2. * EV_TO_J;
 
@@ -65,11 +73,11 @@ fn main() {
         0., 30., 60,
     );
 
-    let binner_velocity = UnitBinner::<units::TEN_MILLION_CM_PER_SECOND>::new(
-        -50., 50., 1000,
+    let binner_velocity = UnitBinner::<units::MILLION_CM_PER_SECOND>::new(
+        -500., 500., 1000,
     );
 
-    let histo = VelocityHistogram::new(
+    let velocity_histo = Histogram::new(
         "velocity".to_string(),
         Binner2D {
             major: binner_field.clone(),
@@ -77,16 +85,48 @@ fn main() {
         },
     );
 
-    let n_electrons = 1000;
+    let mechanism_names: Vec<&'static str> =
+        Electron::all_mechanisms::<ChaCha8Rng>().iter()
+            .map(|x| x.name_short)
+            .collect();
+
+    let binner_mechanism = DiscreteBinner::new(mechanism_names);
+    let mechanism_histo = Histogram::new(
+        "Mechanism".into(),
+        Binner2D {
+            major: binner_field.clone(),
+            minor: binner_mechanism.clone(),
+        }
+    );
+
+    let valley_names: Vec<&'static str> = sample_sc.valleys.iter().map(|v| v.name).collect();
+    let binner_valley = DiscreteBinner::new(valley_names);
+    let valley_histo = Histogram::new(
+        "Valleys".into(),
+        Binner2D {
+            major: binner_field.clone(),
+            minor: binner_valley.clone(),
+        }
+    );
+
+    let n_electrons = 20;
     let t_stop = 4e-12;
     let n_threads = num_cpus::get();
 
-    let histo: VelocityHistogram = std::thread::scope(|scope| {
-        let mut histo = histo;
+    let histo: Histograms = std::thread::scope(|scope| {
+        let mut histo = Histograms {
+            velocity: velocity_histo,
+            mechanism: mechanism_histo,
+            valley: valley_histo,
+        };
 
         let mut handles = (0..n_threads).map(|thread_idx| {
             let sample_sc = sample_sc.clone();
-            let histo = histo.get_worker();
+            let histo = Histograms {
+                velocity: histo.velocity.get_worker(),
+                mechanism: histo.mechanism.get_worker(),
+                valley: histo.valley.get_worker(),
+            };
             let handle = scope.spawn(move || {
                 generate_histogram(thread_idx, sample_sc, histo, step_info, n_electrons, t_stop)
             });
@@ -104,7 +144,9 @@ fn main() {
                 continue;
             };
 
-            histo.merge_worker(thread_hist);
+            histo.velocity.merge_worker(thread_hist.velocity);
+            histo.mechanism.merge_worker(thread_hist.mechanism);
+            histo.valley.merge_worker(thread_hist.valley);
         }
         histo
     });
@@ -113,7 +155,7 @@ fn main() {
         let mut plot_histo_v = Plot::new();
 
         for (idx, (efield_si, efield_unit)) in binner_field.steps_si_and_unit().enumerate() {
-            let histo_v = histo.as_ref_at_major(efield_si).unwrap();
+            let histo_v = histo.velocity.as_ref_at_major(efield_si).unwrap();
             let color = common::COLOR_GRADIENT_STANDARD.get(idx as f64 / binner_field.count() as f64);
             let total_time = histo_v.subtotal();
 
@@ -132,7 +174,7 @@ fn main() {
                 .width(1200).height(800)
                 .title("Velocities")
                 .x_axis(
-                    Axis::new().title("$v_x [10^7 cm/s]$")
+                    Axis::new().title("$v_x [10^6 cm/s]$")
                 )
                 .y_axis(
                     Axis::new().title(r"$\text{Time (rel)}$")
@@ -144,23 +186,20 @@ fn main() {
 
     let plot_mobility = {
         let mut plot_mobility = Plot::new();
-        let ideal_mobility = 6500.0; // cm² / Vs
 
-        let mobility_points = binner_field.steps_si_and_unit().map(|(efield_si, _)| {
-            let histo_v = histo.as_ref_at_major(efield_si).unwrap();
+        let mobility_points = binner_field.steps_si_and_unit().map(|(efield, _)| {
+            let histo_v = histo.velocity.as_ref_at_major(efield).unwrap();
             let mean_v = histo_v.mean();
 
-            // rough fit from https://www.ioffe.ru/SVA/NSM/Semicond/GaAs/Figs/437.gif
-            let ideal_v_lin = ideal_mobility/1e4 * efield_si; // from bulk low-field mobility
-            let ideal_v = if efield_si < 2.0e5 {
-                ideal_v_lin
-            } else {
-                let ideal_v_sat = 1.2e5 * (1. + (-(efield_si - 4.0e5)/1.0e5).exp());
-                let alpha = -4.0;
-                (ideal_v_lin.powf(alpha) + ideal_v_sat.powf(alpha)).powf(1. / alpha)
-            };
+            // from Analysis and simulation of semiconductor devices, 1984 (source for graph in [mixers-and-multipliers-2014])
 
-            (binner_field.from_si(efield_si), -binner_velocity.from_si(mean_v), binner_velocity.from_si(ideal_v))
+            let mobility_linear = 0.9; // m/s / (V/m)
+            let efield_crit: f64 = 4e5;
+            let v_sat = 8.5e4;
+            let v_model = (mobility_linear * efield + v_sat * efield.powi(4)/efield_crit.powi(4)) / (1. + efield.powi(4)/efield_crit.powi(4));
+
+
+            (binner_field.from_si(efield), -binner_velocity.from_si(mean_v), binner_velocity.from_si(v_model))
         }).collect::<Vec<_>>();
 
         let trace_meas= Scatter::new(
@@ -189,11 +228,79 @@ fn main() {
                     Axis::new().title("$E_x [kV/cm]$")
                 )
                 .y_axis(
-                    Axis::new().title(r"$\vert v_x\vert [10^7 cm/s]$")
+                    Axis::new().title(r"$\vert v_x\vert [10^6 cm/s]$")
                 )
         );
         plot_mobility
     };
 
-    write_plots("monte-carlo", "mobility", [plot_histo_v, plot_mobility]);
+    let plot_mechanisms = {
+        let mut plot_mechanisms = Plot::new();
+
+        let total_at_field = binner_field.steps_si_and_unit().map(|(field, _)| {
+            histo.mechanism.as_ref_at_major(field).unwrap().subtotal()
+        }).collect::<Vec<_>>();
+
+        for mech_ty in binner_mechanism.steps() {
+            let histo_mech = histo.mechanism.as_ref_at_minor(mech_ty).unwrap();
+
+            let trace = Scatter::new(
+                    histo_mech.all_values().map(|(field, _count)| binner_field.from_si(field)).collect(),
+                    histo_mech.all_values().zip(total_at_field.iter()).map(|((_field, count), total)| count / total * 100.).collect(),
+                )
+                .mode(Mode::Lines)
+                .name(mech_ty);
+            plot_mechanisms.add_trace(trace);
+        }
+
+        plot_mechanisms.set_layout(
+            Layout::new()
+                .width(1200).height(800)
+                .title("Mechanisms")
+                .x_axis(
+                    Axis::new().title("$E_x [kV/cm]$")
+                )
+                .y_axis(
+                    Axis::new().title(r"Percentage of mechanisms")
+                )
+        );
+
+        plot_mechanisms
+    };
+
+    let plot_valley = {
+        let mut plot_valley = Plot::new();
+
+        let total_at_field = binner_field.steps_si_and_unit().map(|(field, _)| {
+            histo.valley.as_ref_at_major(field).unwrap().subtotal()
+        }).collect::<Vec<_>>();
+
+        for valley_name in binner_valley.steps() {
+            let histo_valley = histo.valley.as_ref_at_minor(valley_name).unwrap();
+
+            let trace = Scatter::new(
+                    histo_valley.all_values().map(|(field, _count)| binner_field.from_si(field)).collect(),
+                    histo_valley.all_values().zip(total_at_field.iter()).map(|((_field, count), total)| count / total).collect(),
+                )
+                .mode(Mode::Lines)
+                .name(valley_name);
+            plot_valley.add_trace(trace);
+        }
+
+        plot_valley.set_layout(
+            Layout::new()
+                .width(1200).height(800)
+                .title("Valley")
+                .x_axis(
+                    Axis::new().title("$E_x [kV/cm]$")
+                )
+                .y_axis(
+                    Axis::new().title(r"Count, rel, log10")
+                )
+        );
+
+        plot_valley
+    };
+
+    write_plots("monte-carlo", "mobility", [plot_histo_v, plot_mobility, plot_mechanisms, plot_valley]);
 }

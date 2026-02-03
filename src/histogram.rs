@@ -93,11 +93,11 @@ pub mod units {
 
     // why is this used so much in litterature?
     #[derive(Clone, Copy, Debug)]
-    pub struct TEN_MILLION_CM_PER_SECOND;
-    impl Unit for TEN_MILLION_CM_PER_SECOND {
-        const NAME: &'static str = "$10^7$ cm/s";
+    pub struct MILLION_CM_PER_SECOND;
+    impl Unit for MILLION_CM_PER_SECOND {
+        const NAME: &'static str = "$10^6$ cm/s";
 
-        const IN_SI: f64 = 1e5;
+        const IN_SI: f64 = 1e4;
     }
 
 }
@@ -600,7 +600,7 @@ mod tests {
     #[test]
     fn test_binner2d() {
         let major: UnitBinner<units::KV_PER_CM> = UnitBinner::new(0., 5., 6);
-        let minor: UnitBinner<units::TEN_MILLION_CM_PER_SECOND> = UnitBinner::new(-20., 20., 3);
+        let minor: UnitBinner<units::MILLION_CM_PER_SECOND> = UnitBinner::new(-20., 20., 3);
         let binner = Binner2D { major, minor };
 
         assert_eq!(binner.count(), 18);
@@ -637,7 +637,7 @@ mod tests {
     #[test]
     fn test_histogram_2d() {
         let major: UnitBinner<units::KV_PER_CM> = UnitBinner::new(0., 5., 6);
-        let minor: UnitBinner<units::TEN_MILLION_CM_PER_SECOND> = UnitBinner::new(-20., 20., 3);
+        let minor: UnitBinner<units::MILLION_CM_PER_SECOND> = UnitBinner::new(-20., 20., 3);
         let binner = Binner2D { major: major.clone(), minor: minor.clone(), };
 
         let mut histo = Histogram::new("Test histo 2D".into(), binner);
@@ -655,7 +655,7 @@ mod tests {
     #[test]
     fn test_histogram_2d_slices() {
         let major: UnitBinner<units::KV_PER_CM> = UnitBinner::new(0., 5., 6);
-        let minor: UnitBinner<units::TEN_MILLION_CM_PER_SECOND> = UnitBinner::new(-20., 20., 3);
+        let minor: UnitBinner<units::MILLION_CM_PER_SECOND> = UnitBinner::new(-20., 20., 3);
         let binner = Binner2D { major: major.clone(), minor: minor.clone(), };
 
         let mut histo = Histogram::new("Test histo 2D slicing".into(), binner);

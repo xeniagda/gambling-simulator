@@ -16,7 +16,7 @@ type MechanismBinner = DiscreteBinner<&'static str>;
 struct Histograms {
     energy_histogram: Histogram<Binner2D<ValleyBinner, UnitBinner<units::MEV>>>,
     mechanism_histogram: Histogram<Binner2D<ValleyBinner, MechanismBinner>>,
-    velocity_histogram: Histogram<UnitBinner<units::TEN_MILLION_CM_PER_SECOND>>,
+    velocity_histogram: Histogram<UnitBinner<units::MILLION_CM_PER_SECOND>>,
 }
 
 fn generate_histogram(
@@ -94,7 +94,7 @@ fn main() {
 
     let velocity_histogram = Histogram::new(
         "Velocity".into(),
-        UnitBinner::<units::TEN_MILLION_CM_PER_SECOND>::new(
+        UnitBinner::<units::MILLION_CM_PER_SECOND>::new(
             -100., 100., 1000,
         ),
     );
@@ -113,7 +113,7 @@ fn main() {
         velocity_histogram,
     };
 
-    let n_electrons = 1000;
+    let n_electrons = 100;
     let t_stop = 40e-12; // ps
     let n_threads = num_cpus::get();
 
@@ -154,11 +154,11 @@ fn main() {
         let mean_v_si = histograms.velocity_histogram.as_ref().mean();
         let stddev_v_si = histograms.velocity_histogram.as_ref().stddev();
 
-        eprintln!("Mean velocty = {:.4} ± {:.4} 10^7 cm/s", histograms.velocity_histogram.binner.from_si(mean_v_si), histograms.velocity_histogram.binner.from_si(stddev_v_si));
+        eprintln!("Mean velocty = {:.4} ± {:.4} 10^6 cm/s", histograms.velocity_histogram.binner.from_si(mean_v_si), histograms.velocity_histogram.binner.from_si(stddev_v_si));
 
         let gaas_mobility = 0.9; // m/s / (V/m)
         let lin_mean_vel = -gaas_mobility * step_info.applied_field[0];
-        eprintln!("  (should be {:.4} 10^7 cm/s)", histograms.velocity_histogram.binner.from_si(lin_mean_vel));
+        eprintln!("  (should be {:.4} 10^6 cm/s)", histograms.velocity_histogram.binner.from_si(lin_mean_vel));
     }
 
     // Histogram of energies
@@ -205,7 +205,7 @@ fn main() {
                 .width(1200).height(800)
                 .title(format!(r"$\text{{Velocities}}, E_x = {} kV/cm$", step_info.applied_field[0] / 1e5))
                 .x_axis(
-                    Axis::new().title("$v_x [10^7 cm/s]$")
+                    Axis::new().title("$v_x [10^6 cm/s]$")
                 )
                 .y_axis(
                     Axis::new().title(r"$\text{Time (rel)}$")
