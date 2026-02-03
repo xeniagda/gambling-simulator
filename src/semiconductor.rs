@@ -292,7 +292,7 @@ impl<'sc> Electron<'sc> {
             rate: |e| e.rate_impurity(None),
             // Strictly increasing
             maximum_rate: |el, en| el.rate_impurity(Some(en)),
-            resulting_state: |e, r| e.scatter_isotropic(r, e.energy()),
+            resulting_state: |e, r| e.scatter_impurity(r),
         };
         let mut mechanisms = vec![intra_ac_phonon, intra_opt_phonon_abs, intra_opt_phonon_em, impurity];
 
@@ -374,6 +374,27 @@ impl<'sc> Electron<'sc> {
 
         let k_res = coord_sys.cylidrical(k_res_mag, theta, phi);
 
+        Electron {
+            k: k_res,
+            ..*self
+        }
+    }
+
+    // CW approach, from [monte-carlo-book-1989.pdf]
+    pub fn scatter_impurity<R: Rng>(&self, rng: &mut R) -> Electron<'sc> {
+        let kmag = self.k.iter().map(|x| x.powi(2)).sum::<f64>().sqrt();
+        let coord_sys = CoordSystem::given_z(self.k);
+
+        let phi = rng.random_range(0. ..= 2.*PI);
+
+        let impurity_mean_dist = (3. / (4. * PI * self.sc.impurity_density)).powf(1./3.);
+        let eps_b = ELECTRON_CHARGE.powi(2) / (2. * self.sc.relative_dielectric_static * EPS0 * impurity_mean_dist);
+        let r = rng.random_range(0f64..=1f64);
+        let E = self.energy();
+        let f = (E * (1. + self.valley().nonparabolicity * E) / (eps_b * (1. + 2. * self.valley().nonparabolicity * E))).powi(2);
+        let theta = ((f * r - 1.) / (f * r + 1.)).acos();
+
+        let k_res = coord_sys.cylidrical(kmag, theta, phi);
 
         Electron {
             k: k_res,
