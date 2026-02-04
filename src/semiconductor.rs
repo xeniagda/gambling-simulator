@@ -474,7 +474,7 @@ impl<'sc> Electron<'sc> {
         let N_op = 1./(-1. + (this_valley.optical_phonon_energy / (BOLTZMANN * self.sc.temperature)).exp());
         let N_op_eff = if ty == PhononType::Emission { N_op + 1. } else { N_op };
 
-        N_op_eff * n_dest_valleys as f64 * this_valley.effective_mass().powf(1.5) * self.sc.intervalley_deformation_potential.powi(2) * E_.sqrt()
+        N_op_eff * n_dest_valleys as f64 * dest_valley.effective_mass().powf(1.5) * self.sc.intervalley_deformation_potential.powi(2) * E_.sqrt()
             / (2f64.sqrt() * PI * self.sc.density * PLANCK_BAR_SI.powi(2) * phonon_energy)
     }
 
