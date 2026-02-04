@@ -103,13 +103,13 @@ impl Semiconductor {
             valleys: vec![Γ, L, X].into(),
             temperature,
             lattice_constant: a,
-            density: 5.37 * 1000.,
+            density: 5370.,
             sound_velocity: 5220.,
-            relative_dielectric_static: 12.53,
-            relative_dielectric_hf: 10.82,
-            acoustic_deformation_potential: 7.0 * EV_TO_J,
-            intervalley_deformation_potential: 1.0e9 * EV_TO_J * 100., // 1e9 eV/cm
-            impurity_density: 1.0e17 * 1e6, // 1e17 cm^-3 used in [multipliers-and-mixers-2014]
+            relative_dielectric_static: 12.9,
+            relative_dielectric_hf: 10.92,
+            acoustic_deformation_potential: 5.0 * EV_TO_J, // Value from [multipliers-and-mixers-2014]
+            intervalley_deformation_potential: 10e10 * EV_TO_J, // 1e9 eV/cm
+            impurity_density: 1.0e14 * 1e6, // 1e17 cm^-3 used in [multipliers-and-mixers-2014]
         }
     }
 }
@@ -415,7 +415,7 @@ impl<'sc> Electron<'sc> {
 
     // Dependent on 1/|k - k'|^2
     // E' = E ± E_phonon
-    // From monte-carlo-transport-gaas-1969
+    // From monte-carlo-review-1991
     pub fn rate_intra_opt_phonon(&self, ty: PhononType, E: Option<f64>) -> f64 {
         let valley = self.valley();
 
@@ -441,7 +441,6 @@ impl<'sc> Electron<'sc> {
         let B = -2. * α * γE.sqrt() * γE_.sqrt() * (4. * (1. + α * E) * (1. + α * E_) + α * (γE + γE_));
         let C = 4. * (1. + α * E) * (1. + α * E_) * (1. + 2. * α * E) * (1. + 2. * α * E_);
         let F0 = (A * ((γE.sqrt() + γE_.sqrt()) / (γE.sqrt() - γE_.sqrt())).abs().ln() + B) / C;
-
 
         N_op_eff * ELECTRON_CHARGE.powi(2) * valley.effective_mass().sqrt() * valley.optical_phonon_energy
             / (2f64.sqrt() * PLANCK_BAR_SI.powi(2) * (4. * PI * EPS0))
@@ -564,6 +563,7 @@ impl<'sc> Electron<'sc> {
                 return Some(mech);
             }
         }
+        // self scattering happened
         None
     }
 }
