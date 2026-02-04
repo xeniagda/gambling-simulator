@@ -13,6 +13,7 @@ use crate::common::write_plots;
 
 struct Histograms {
     velocity: Histogram<Binner2D<UnitBinner<units::KV_PER_CM>, UnitBinner<units::MILLION_CM_PER_SECOND>>>,
+    energy: Histogram<Binner2D<UnitBinner<units::KV_PER_CM>, UnitBinner<units::MEV>>>,
     mechanism: Histogram<Binner2D<UnitBinner<units::KV_PER_CM>, DiscreteBinner<&'static str>>>,
     valley: Histogram<Binner2D<UnitBinner<units::KV_PER_CM>, DiscreteBinner<&'static str>>>,
 }
@@ -48,6 +49,7 @@ fn generate_histogram(
                 // Set histogram
                 let vx_now = electron.velocity()[0];
                 histo.velocity.add((efield, vx_now), t);
+                histo.energy.add((efield, electron.energy()), t);
 
                 histo.valley.add((efield, electron.valley().name), t);
                 if let Some(mech) = scatter_mech {
@@ -72,9 +74,11 @@ fn main() {
     let binner_field = UnitBinner::<units::KV_PER_CM>::new(
         0., 30., 60,
     );
-
     let binner_velocity = UnitBinner::<units::MILLION_CM_PER_SECOND>::new(
         -500., 500., 1000,
+    );
+    let binner_energy = UnitBinner::<units::MEV>::new_si(
+        0., energy_max, 1000,
     );
 
     let velocity_histo = Histogram::new(
@@ -82,6 +86,14 @@ fn main() {
         Binner2D {
             major: binner_field.clone(),
             minor: binner_velocity.clone(),
+        },
+    );
+
+    let energy_histo = Histogram::new(
+        "energy".to_string(),
+        Binner2D {
+            major: binner_field.clone(),
+            minor: binner_energy.clone(),
         },
     );
 
@@ -116,6 +128,7 @@ fn main() {
     let histo: Histograms = std::thread::scope(|scope| {
         let mut histo = Histograms {
             velocity: velocity_histo,
+            energy: energy_histo,
             mechanism: mechanism_histo,
             valley: valley_histo,
         };
@@ -124,6 +137,7 @@ fn main() {
             let sample_sc = sample_sc.clone();
             let histo = Histograms {
                 velocity: histo.velocity.get_worker(),
+                energy: histo.energy.get_worker(),
                 mechanism: histo.mechanism.get_worker(),
                 valley: histo.valley.get_worker(),
             };
@@ -145,6 +159,7 @@ fn main() {
             };
 
             histo.velocity.merge_worker(thread_hist.velocity);
+            histo.energy.merge_worker(thread_hist.energy);
             histo.mechanism.merge_worker(thread_hist.mechanism);
             histo.valley.merge_worker(thread_hist.valley);
         }
@@ -182,6 +197,38 @@ fn main() {
         );
 
         plot_histo_v
+    };
+
+    let plot_energy = {
+        let mut plot_energy = Plot::new();
+
+        let energy_points: Vec<(f64, f64)> = binner_field.steps_si_and_unit().map(|(efield, _)| {
+            let histo_energy = histo.energy.as_ref_at_major(efield).unwrap();
+            let mean_energy = histo_energy.mean();
+
+            (efield, mean_energy)
+        }).collect();
+
+        let trace = Scatter::new(
+                energy_points.iter().map(|(efield, _energy)| binner_field.from_si(*efield)).collect(),
+                energy_points.iter().map(|(_efield, energy)| binner_energy.from_si(*energy)).collect(),
+            )
+            .mode(Mode::Lines);
+        plot_energy.add_trace(trace);
+
+        plot_energy.set_layout(
+            Layout::new()
+                .width(1200).height(800)
+                .title("Energy")
+                .x_axis(
+                    Axis::new().title("$E_x [kV/cm]$")
+                )
+                .y_axis(
+                    Axis::new().title(r"E [meV]")
+                )
+        );
+
+        plot_energy
     };
 
     let plot_mobility = {
@@ -302,5 +349,6 @@ fn main() {
         plot_valley
     };
 
-    write_plots("monte-carlo", "mobility", [plot_histo_v, plot_mobility, plot_mechanisms, plot_valley]);
+    let name = format!("mobility-ni-1e{}", (sample_sc.impurity_density/1e6).log10().round());
+    write_plots("monte-carlo", name, [plot_histo_v, plot_energy, plot_mobility, plot_mechanisms, plot_valley]);
 }
