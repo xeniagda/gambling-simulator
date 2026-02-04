@@ -1,7 +1,7 @@
 #![allow(non_snake_case, mixed_script_confusables)] // for band names such as Γ and L etc
 
 use gambling_simulator::{consts::EV_TO_J, semiconductor::{Electron, Semiconductor, StepInfo}};
-use gambling_simulator::histogram::{Histogram, Binner, Binner2D, UnitBinner, units, DiscreteBinner};
+use gambling_simulator::histogram::{generate_histogram_collection_struct, Histogram, Binner, Binner2D, UnitBinner, units, DiscreteBinner};
 
 use plotly::{common::{DashType, Line, Mode}, layout::Axis, Layout, Plot, Scatter};
 use rand::SeedableRng;
@@ -11,11 +11,13 @@ use tqdm::tqdm;
 
 use crate::common::write_plots;
 
-struct Histograms {
-    velocity: Histogram<Binner2D<UnitBinner<units::KV_PER_CM>, UnitBinner<units::MILLION_CM_PER_SECOND>>>,
-    energy: Histogram<Binner2D<UnitBinner<units::KV_PER_CM>, UnitBinner<units::MEV>>>,
-    mechanism: Histogram<Binner2D<UnitBinner<units::KV_PER_CM>, DiscreteBinner<&'static str>>>,
-    valley: Histogram<Binner2D<UnitBinner<units::KV_PER_CM>, DiscreteBinner<&'static str>>>,
+generate_histogram_collection_struct! {
+    struct Histograms {
+        velocity: Histogram<Binner2D<UnitBinner<units::KV_PER_CM>, UnitBinner<units::MILLION_CM_PER_SECOND>>>,
+        energy: Histogram<Binner2D<UnitBinner<units::KV_PER_CM>, UnitBinner<units::MEV>>>,
+        mechanism: Histogram<Binner2D<UnitBinner<units::KV_PER_CM>, DiscreteBinner<&'static str>>>,
+        valley: Histogram<Binner2D<UnitBinner<units::KV_PER_CM>, DiscreteBinner<&'static str>>>,
+    }
 }
 
 fn generate_histogram(
@@ -134,15 +136,9 @@ fn main() {
         };
 
         let mut handles = (0..n_threads).map(|thread_idx| {
-            let sample_sc = sample_sc.clone();
-            let histo = Histograms {
-                velocity: histo.velocity.get_worker(),
-                energy: histo.energy.get_worker(),
-                mechanism: histo.mechanism.get_worker(),
-                valley: histo.valley.get_worker(),
-            };
+            let (sample_sc, worker) = (sample_sc.clone(), histo.get_worker());
             let handle = scope.spawn(move || {
-                generate_histogram(thread_idx, sample_sc, histo, step_info, n_electrons, t_stop)
+                generate_histogram(thread_idx, sample_sc, worker, step_info, n_electrons, t_stop)
             });
             (handle, thread_idx)
         }).collect::<Vec<_>>();
@@ -153,15 +149,12 @@ fn main() {
                 continue;
             };
             let (handle, thread_idx) = handles.remove(finished_idx);
-            let Ok(thread_hist) = handle.join() else {
+            let Ok(worker) = handle.join() else {
                 eprintln!("thread {thread_idx} panicked :(");
                 continue;
             };
 
-            histo.velocity.merge_worker(thread_hist.velocity);
-            histo.energy.merge_worker(thread_hist.energy);
-            histo.mechanism.merge_worker(thread_hist.mechanism);
-            histo.valley.merge_worker(thread_hist.valley);
+            histo.merge_worker(worker);
         }
         histo
     });

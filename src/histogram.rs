@@ -495,10 +495,35 @@ impl<'h, B: Binner> HistogramRefMut<'h, B> {
     // TODO: mean method
 }
 
+#[macro_export]
+macro_rules! generate_histogram_collection_struct {
+    { $(struct $name:ident { $($field:ident: $ty:ty),* $(,)? })* } => {
+        $(
+            struct $name {
+                $($field: $ty,)+
+            }
+            impl $name {
+                #[allow(dead_code)]
+                fn get_worker(&self) -> $name {
+                    $name {
+                        $($field: self.$field.get_worker(),)*
+                    }
+                }
+
+                #[allow(dead_code)]
+                fn merge_worker(&mut self, worker: $name) {
+                    $(self.$field.merge_worker(worker.$field);)*
+                }
+            }
+        )*
+    };
+}
+
+pub use generate_histogram_collection_struct;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    pub use super::*;
 
     fn pred_is_sync<T: Sync>() {}
     // This will fail to compile if Histogram ever turns !Sync
@@ -712,5 +737,53 @@ mod tests {
         assert_eq_float!(histo.get(binner.to_si(2.)), 7.);
         assert_eq_float!(histo.get(binner.to_si(3.)), 0.);
 
+    }
+
+    // Test generate_histogram_collection_struct
+    mod autostructs {
+        use super::*;
+
+        // TODO: We should really try generating multiple histogram structs
+        generate_histogram_collection_struct! {
+            struct Histograms {
+                histo_1: Histogram<DiscreteBinner<usize>>,
+                histo_2: Histogram<UnitBinner<units::EV>>,
+            }
+        }
+
+        #[test]
+        fn test_generated_thingy() {
+            let mut h = Histograms {
+                histo_1: Histogram::new("awa".to_string(), DiscreteBinner::new(vec![1, 2, 3])),
+                histo_2: Histogram::new("bwa".to_string(), UnitBinner::new(0., 1., 10)),
+            };
+            // add some stuff to h
+            h.histo_1.add(1, 6.);
+            h.histo_2.add(units::EV::to_si(0.7), 10.);
+
+            // add some stuff through workers
+            let mut worker1 = h.get_worker();
+            let mut worker2 = h.get_worker();
+            worker1.histo_1.add(1, 7.);
+            worker1.histo_1.add(2, 8.);
+            worker1.histo_2.add(units::EV::to_si(0.5), 10.);
+
+            worker2.histo_1.add(1, 6.);
+            worker2.histo_1.add(3, 7.);
+            worker1.histo_2.add(units::EV::to_si(0.5), 10.);
+
+            // merge everything
+            h.merge_worker(worker1);
+            h.merge_worker(worker2);
+
+            // check
+            assert_eq_float!(h.histo_1.get(1), 19.);
+            assert_eq_float!(h.histo_1.get(2), 8.);
+            assert_eq_float!(h.histo_1.get(3), 7.);
+
+            assert_eq_float!(h.histo_2.get(units::EV::to_si(0.5)), 20.);
+            assert_eq_float!(h.histo_2.get(units::EV::to_si(0.7)), 10.);
+            assert_eq_float!(h.histo_2.get(units::EV::to_si(0.9)), 0.);
+        }
     }
 }

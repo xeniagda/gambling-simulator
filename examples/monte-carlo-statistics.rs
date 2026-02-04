@@ -1,7 +1,7 @@
 #![allow(non_snake_case, mixed_script_confusables)] // for band names such as Γ and L etc
 
 use gambling_simulator::{consts::EV_TO_J, histogram::units::KV_PER_CM, semiconductor::{Electron, Semiconductor, StepInfo}};
-use gambling_simulator::histogram::{Histogram, Binner, DiscreteBinner, UnitBinner, Binner2D, units, units::Unit};
+use gambling_simulator::histogram::{generate_histogram_collection_struct, Histogram, Binner, DiscreteBinner, UnitBinner, Binner2D, units, units::Unit};
 
 use plotly::{Layout, Plot, Scatter, common::{Line, Marker, Mode}, layout::Axis};
 use rand::SeedableRng;
@@ -13,10 +13,12 @@ use tqdm::tqdm;
 type ValleyBinner = DiscreteBinner<&'static str>;
 type MechanismBinner = DiscreteBinner<&'static str>;
 
-struct Histograms {
-    energy_histogram: Histogram<Binner2D<ValleyBinner, UnitBinner<units::MEV>>>,
-    mechanism_histogram: Histogram<Binner2D<ValleyBinner, MechanismBinner>>,
-    velocity_histogram: Histogram<UnitBinner<units::MILLION_CM_PER_SECOND>>,
+generate_histogram_collection_struct! {
+    struct Histograms {
+        energy_histogram: Histogram<Binner2D<ValleyBinner, UnitBinner<units::MEV>>>,
+        mechanism_histogram: Histogram<Binner2D<ValleyBinner, MechanismBinner>>,
+        velocity_histogram: Histogram<UnitBinner<units::MILLION_CM_PER_SECOND>>,
+    }
 }
 
 fn generate_histogram(
@@ -121,12 +123,7 @@ fn main() {
         let mut histograms = histograms;
 
         let mut handles = (0..n_threads).map(|thread_idx| {
-            let sample_sc = sample_sc.clone();
-            let worker = Histograms {
-                energy_histogram: histograms.energy_histogram.get_worker(),
-                mechanism_histogram: histograms.mechanism_histogram.get_worker(),
-                velocity_histogram: histograms.velocity_histogram.get_worker(),
-            };
+            let (sample_sc, worker) = (sample_sc.clone(), histograms.get_worker());
             let handle = scope.spawn(move || generate_histogram(thread_idx, worker, sample_sc, step_info,  n_electrons, t_stop));
             (handle, thread_idx)
         }).collect::<Vec<_>>();
@@ -142,9 +139,7 @@ fn main() {
                 continue;
             };
 
-            histograms.energy_histogram.merge_worker(worker.energy_histogram);
-            histograms.mechanism_histogram.merge_worker(worker.mechanism_histogram);
-            histograms.velocity_histogram.merge_worker(worker.velocity_histogram);
+            histograms.merge_worker(worker);
         }
         histograms
     });
