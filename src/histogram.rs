@@ -376,7 +376,7 @@ impl<Major: Binner, Minor: Binner> Histogram<Binner2D<Major, Minor>> {
         let minor_count = self.binner.minor.count();
         Ok(HistogramRefMut {
             binner: &self.binner.minor,
-            storage: &mut self.storage[major_idx * minor_count..(major_idx) * minor_count],
+            storage: &mut self.storage[major_idx * minor_count..(major_idx+1) * minor_count],
             stride: 1,
             total: &mut self.total,
         })
