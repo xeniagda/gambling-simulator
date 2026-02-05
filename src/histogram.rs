@@ -100,8 +100,15 @@ pub mod units {
         const IN_SI: f64 = 1e4;
     }
 
+    #[derive(Clone, Copy, Debug)]
+    pub struct PS;
+    impl Unit for PS {
+        const NAME: &'static str = "ps";
+
+        const IN_SI: f64 = 1e-12;
+    }
 }
-use units::Unit;
+pub use units::Unit;
 
 
 #[allow(unused)]
