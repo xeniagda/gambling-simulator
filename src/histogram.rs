@@ -118,24 +118,27 @@ pub use units::Unit;
 pub struct UnitBinner<U: Unit> {
     _marker: PhantomData<U>,
 
+    pub quantity_name: &'static str,
     pub start_si: f64,
     pub end_si: f64,
     pub count: usize,
 }
 
 impl<U: Unit> UnitBinner<U> {
-    pub fn new_si(start_si: f64, end_si: f64, count: usize) -> Self {
+    pub fn new_si(quantity_name: &'static str, start_si: f64, end_si: f64, count: usize) -> Self {
         UnitBinner {
             _marker: PhantomData,
+            quantity_name,
             start_si,
             end_si,
             count,
         }
     }
 
-    pub fn new(start_unit: f64, end_unit: f64, count: usize) -> Self {
+    pub fn new(quantity_name: &'static str, start_unit: f64, end_unit: f64, count: usize) -> Self {
         UnitBinner {
             _marker: PhantomData,
+            quantity_name,
             start_si: U::to_si(start_unit),
             end_si: U::to_si(end_unit),
             count,
@@ -630,8 +633,8 @@ mod tests {
 
     #[test]
     fn test_binner2d() {
-        let major: UnitBinner<units::KV_PER_CM> = UnitBinner::new(0., 5., 6);
-        let minor: UnitBinner<units::MILLION_CM_PER_SECOND> = UnitBinner::new(-20., 20., 3);
+        let major: UnitBinner<units::KV_PER_CM> = UnitBinner::new("E_x", 0., 5., 6);
+        let minor: UnitBinner<units::MILLION_CM_PER_SECOND> = UnitBinner::new("v", -20., 20., 3);
         let binner = Binner2D { major, minor };
 
         assert_eq!(binner.count(), 18);
@@ -644,7 +647,7 @@ mod tests {
 
     #[test]
     fn test_histogram() {
-        let binner: UnitBinner<units::EV> = UnitBinner::new(5., 10., 6);
+        let binner: UnitBinner<units::EV> = UnitBinner::new("E", 5., 10., 6);
         let mut histo = Histogram::new("Test histo 1D".into(), binner);
 
         histo.add(histo.binner.to_si(6.), 2.);
@@ -667,8 +670,8 @@ mod tests {
 
     #[test]
     fn test_histogram_2d() {
-        let major: UnitBinner<units::KV_PER_CM> = UnitBinner::new(0., 5., 6);
-        let minor: UnitBinner<units::MILLION_CM_PER_SECOND> = UnitBinner::new(-20., 20., 3);
+        let major: UnitBinner<units::KV_PER_CM> = UnitBinner::new("E_x", 0., 5., 6);
+        let minor: UnitBinner<units::MILLION_CM_PER_SECOND> = UnitBinner::new("v", -20., 20., 3);
         let binner = Binner2D { major: major.clone(), minor: minor.clone(), };
 
         let mut histo = Histogram::new("Test histo 2D".into(), binner);
@@ -685,8 +688,8 @@ mod tests {
 
     #[test]
     fn test_histogram_2d_slices() {
-        let major: UnitBinner<units::KV_PER_CM> = UnitBinner::new(0., 5., 6);
-        let minor: UnitBinner<units::MILLION_CM_PER_SECOND> = UnitBinner::new(-20., 20., 3);
+        let major: UnitBinner<units::KV_PER_CM> = UnitBinner::new("E_x", 0., 5., 6);
+        let minor: UnitBinner<units::MILLION_CM_PER_SECOND> = UnitBinner::new("v", -20., 20., 3);
         let binner = Binner2D { major: major.clone(), minor: minor.clone(), };
 
         let mut histo = Histogram::new("Test histo 2D slicing".into(), binner);
@@ -723,7 +726,7 @@ mod tests {
 
     #[test]
     fn test_histogram_workers() {
-        let binner: UnitBinner<units::EV> = UnitBinner::new(0., 5., 6);
+        let binner: UnitBinner<units::EV> = UnitBinner::new("E", 0., 5., 6);
         let mut histo = Histogram::new("Test histo workers".into(), binner.clone());
 
         let mut worker_1 = histo.get_worker();
@@ -761,7 +764,7 @@ mod tests {
         fn test_generated_thingy() {
             let mut h = Histograms {
                 histo_1: Histogram::new("awa".to_string(), DiscreteBinner::new(vec![1, 2, 3])),
-                histo_2: Histogram::new("bwa".to_string(), UnitBinner::new(0., 1., 10)),
+                histo_2: Histogram::new("bwa".to_string(), UnitBinner::new("E", 0., 1., 10)),
             };
             // add some stuff to h
             h.histo_1.add(1, 6.);
@@ -793,3 +796,4 @@ mod tests {
         }
     }
 }
+

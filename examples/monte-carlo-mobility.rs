@@ -74,12 +74,15 @@ fn main() {
     };
 
     let binner_field = UnitBinner::<units::KV_PER_CM>::new(
+        "E_x",
         0., 30., 60,
     );
     let binner_velocity = UnitBinner::<units::MILLION_CM_PER_SECOND>::new(
+        "v_x",
         -500., 500., 1000,
     );
     let binner_energy = UnitBinner::<units::MEV>::new_si(
+        "E",
         0., energy_max, 1000,
     );
 

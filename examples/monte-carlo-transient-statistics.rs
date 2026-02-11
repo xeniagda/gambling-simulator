@@ -67,12 +67,14 @@ fn main() {
     let e_x = units::KV_PER_CM::to_si(20.);
 
     let binner_time: BinnerTime = UnitBinner::new(
-        0.,
-        1.,
-        20,
+        "t",
+        0., 1., 20,
     );
 
-    let binner_velocity: BinnerVelocity = UnitBinner::new(-300., 100., 200);
+    let binner_velocity: BinnerVelocity = UnitBinner::new(
+        "v",
+        -300., 100., 200
+    );
     let histo_vel = Histogram::new(
         "Velocity".to_string(),
         Binner2D {

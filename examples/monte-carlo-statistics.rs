@@ -89,6 +89,7 @@ fn main() {
         Binner2D {
             major: valley_binner.clone(),
             minor: UnitBinner::<units::MEV>::new(
+                "E",
                 0., 2000., 1000,
             ),
         }
@@ -97,6 +98,7 @@ fn main() {
     let velocity_histogram = Histogram::new(
         "Velocity".into(),
         UnitBinner::<units::MILLION_CM_PER_SECOND>::new(
+            "v_x",
             -100., 100., 1000,
         ),
     );
