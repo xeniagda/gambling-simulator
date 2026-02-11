@@ -80,7 +80,7 @@ impl Semiconductor {
         let L = Valley {
             name: "L",
             k_center: vec![[L_xyz, L_xyz, L_xyz,], [-L_xyz, L_xyz, L_xyz,], [L_xyz, -L_xyz, L_xyz,], [L_xyz, L_xyz, -L_xyz,]].into(),
-            effective_mass_to_m0: 0.3,
+            effective_mass_to_m0: 0.35,
             energy: 1.729 * EV_TO_J,
             nonparabolicity: 0.222 / EV_TO_J,
             optical_phonon_energy: 36.13e-3 * EV_TO_J,
@@ -108,7 +108,7 @@ impl Semiconductor {
             relative_dielectric_static: 12.9,
             relative_dielectric_hf: 10.92,
             acoustic_deformation_potential: 5.0 * EV_TO_J, // Value from [multipliers-and-mixers-2014]
-            intervalley_deformation_potential: 10e10 * EV_TO_J, // 1e9 eV/cm
+            intervalley_deformation_potential: 1e11  * EV_TO_J, // value from [monte-carlo-review-1991], is way bigger than in [multipliers-and-mixers] ??
             impurity_density: 1.0e14 * 1e6, // 1e17 cm^-3 used in [multipliers-and-mixers-2014]
         }
     }
@@ -340,6 +340,8 @@ impl<'sc> Electron<'sc> {
     }
 
     /// Resulting state after an isotropic (independent of k') collision resulting in an energy of `res_energy`
+    /// TODO: This assumes parabolic bands for most scattering mechanisms dependent on the overlap integral between k and k'
+    /// For low energy (αE << 1) G(k, k') is isotopic
     pub fn scatter_isotropic<R: Rng>(&self, rng: &mut R, res_energy: f64) -> Electron<'sc> {
         let k_res_mag = self.valley().kmag_for_e(res_energy);
 
@@ -404,7 +406,7 @@ impl<'sc> Electron<'sc> {
 
     // Phonon energy assumed small, independent of emission/absorption
     // Indep. of k', E' = E
-    // TODO: Slightly different form in [monte-carlo-transport-gaas-1969]
+    // Matches [monte-carlo-gaas-1980] (mod a factor of 2)
     pub fn rate_intra_ac_phonon(&self, E: Option<f64>) -> f64 {
         let valley = self.valley();
         let E = E.unwrap_or_else(|| self.energy());
@@ -415,7 +417,7 @@ impl<'sc> Electron<'sc> {
 
     // Dependent on 1/|k - k'|^2
     // E' = E ± E_phonon
-    // From monte-carlo-review-1991
+    // Matches [monte-carlo-gaas-1980] (plus correction factors from [monte-carlo-transport-gaas-1969])
     pub fn rate_intra_opt_phonon(&self, ty: PhononType, E: Option<f64>) -> f64 {
         let valley = self.valley();
 
@@ -436,7 +438,6 @@ impl<'sc> Electron<'sc> {
         let γE = E * (1. + α * E);
         let γE_ = E_ * (1. + α * E_);
 
-
         let A = (2. * (1. + α * E) * (1. + α * E_) + α * (γE + γE_)).powi(2);
         let B = -2. * α * γE.sqrt() * γE_.sqrt() * (4. * (1. + α * E) * (1. + α * E_) + α * (γE + γE_));
         let C = 4. * (1. + α * E) * (1. + α * E_) * (1. + 2. * α * E) * (1. + 2. * α * E_);
@@ -451,6 +452,7 @@ impl<'sc> Electron<'sc> {
 
     // Isotropic
     // E' = E ± E_phonon - E_fi
+    // Matches [monte-carlo-gaas-1980]
     pub fn rate_inter_opt_phonon(&self, ty: PhononType, destination_valley_idx: usize, E: Option<f64>) -> f64 {
         let this_valley = self.valley();
         let dest_valley = &self.sc.valleys[destination_valley_idx];
