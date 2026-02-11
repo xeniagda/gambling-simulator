@@ -45,15 +45,16 @@ fn generate_histogram(
             while t < t_stop {
                 // Step electron
                 let flight = electron.free_flight(&step_info, &mut rng);
-                t += flight.free_flight_time;
+                let dt = flight.free_flight_time;
+                t += dt;
                 let scatter_mech = electron.scatter(&step_info, &mut rng);
 
                 // Set histogram
                 let vx_now = electron.velocity()[0];
-                histo.velocity.add((efield, vx_now), t);
-                histo.energy.add((efield, electron.energy()), t);
+                histo.velocity.add((efield, vx_now), dt);
+                histo.energy.add((efield, electron.energy()), dt);
 
-                histo.valley.add((efield, electron.valley().name), t);
+                histo.valley.add((efield, electron.valley().name), dt);
                 if let Some(mech) = scatter_mech {
                     histo.mechanism.add((efield, mech.name_short), 1.0);
                 } // ignore self-scatters

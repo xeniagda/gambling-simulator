@@ -43,11 +43,11 @@ fn generate_histogram(
             // Set histogram
             let valley = electron.valley().name;
             let flight = electron.free_flight(&step_info, &mut rng);
-            let time = flight.free_flight_time;
-            t += time;
+            let dt = flight.free_flight_time;
+            t += dt;
 
-            histograms.energy_histogram.add((valley, electron.energy()), time);
-            histograms.velocity_histogram.add(electron.velocity()[0], time);
+            histograms.energy_histogram.add((valley, electron.energy()), dt);
+            histograms.velocity_histogram.add(electron.velocity()[0], dt);
 
             if let Some(mech) = electron.scatter(&step_info, &mut rng) {
                 // Find index of mechanism
