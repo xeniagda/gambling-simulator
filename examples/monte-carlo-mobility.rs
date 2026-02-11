@@ -34,8 +34,8 @@ fn generate_histogram(
 
     let Γ_valley_idx = sc.valleys.iter().position(|x| x.name == "Γ").expect("No Γ valley in GaAs");
 
-    let steps: Vec<_> = histo.velocity.binner.major.steps_si_and_unit().collect();
-    for (efield, _) in tqdm(steps).desc(Some(format!("Thread #{thread_idx: <4}"))) {
+    let steps: Vec<_> = histo.velocity.binner.major.steps().collect();
+    for efield in tqdm(steps).desc(Some(format!("Thread #{thread_idx: <4}"))) {
         step_info.applied_field = [efield, 0., 0.,];
 
         for _run in 0..n_electrons {
@@ -162,8 +162,8 @@ fn main() {
     let plot_histo_v = {
         let mut plot_histo_v = Plot::new();
 
-        for (idx, (efield_si, efield_unit)) in binner_field.steps_si_and_unit().enumerate() {
-            let histo_v = histo.velocity.as_ref_at_major(efield_si).unwrap();
+        for (idx, efield) in binner_field.steps().enumerate() {
+            let histo_v = histo.velocity.as_ref_at_major(efield).unwrap();
             let color = common::COLOR_GRADIENT_STANDARD.get(idx as f64 / binner_field.count() as f64);
             let total_time = histo_v.subtotal();
 
@@ -172,7 +172,7 @@ fn main() {
                     histo_v.all_values().map(|(_v_si, time)| time / total_time).collect(),
                 )
                 .mode(Mode::Lines)
-                .name(format!("E_x = {:.3} kV/cm", efield_unit))
+                .name(format!("E_x = {:.3} kV/cm", binner_field.from_si(efield)))
                 .line(Line::new().color(color));
 
             plot_histo_v.add_trace(trace);
@@ -195,7 +195,7 @@ fn main() {
     let plot_energy = {
         let mut plot_energy = Plot::new();
 
-        let energy_points: Vec<(f64, f64)> = binner_field.steps_si_and_unit().map(|(efield, _)| {
+        let energy_points: Vec<(f64, f64)> = binner_field.steps().map(|efield| {
             let histo_energy = histo.energy.as_ref_at_major(efield).unwrap();
             let mean_energy = histo_energy.mean();
 
@@ -227,7 +227,7 @@ fn main() {
     let plot_mobility = {
         let mut plot_mobility = Plot::new();
 
-        let mobility_points = binner_field.steps_si_and_unit().map(|(efield, _)| {
+        let mobility_points = binner_field.steps().map(|efield| {
             let histo_v = histo.velocity.as_ref_at_major(efield).unwrap();
             let mean_v = histo_v.mean();
 
@@ -277,7 +277,7 @@ fn main() {
     let plot_mechanisms = {
         let mut plot_mechanisms = Plot::new();
 
-        let total_at_field = binner_field.steps_si_and_unit().map(|(field, _)| {
+        let total_at_field = binner_field.steps().map(|field| {
             histo.mechanism.as_ref_at_major(field).unwrap().subtotal()
         }).collect::<Vec<_>>();
 
@@ -311,7 +311,7 @@ fn main() {
     let plot_valley = {
         let mut plot_valley = Plot::new();
 
-        let total_at_field = binner_field.steps_si_and_unit().map(|(field, _)| {
+        let total_at_field = binner_field.steps().map(|field| {
             histo.valley.as_ref_at_major(field).unwrap().subtotal()
         }).collect::<Vec<_>>();
 

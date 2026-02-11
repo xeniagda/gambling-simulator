@@ -147,7 +147,7 @@ fn main() {
 
     let plot_histo_v_dist = {
         let mut plot_histo_v_dist = Plot::new();
-        for (i, (t, _)) in binner_time.steps_si_and_unit().enumerate() {
+        for (i, t) in binner_time.steps().enumerate() {
             let color = common::COLOR_GRADIENT_STANDARD.get(i as f64 / binner_time.count as f64);
 
             let histo_v = histograms.velocity.as_ref_at_major(t).unwrap();
@@ -180,8 +180,8 @@ fn main() {
     let plot_histo_v_time = {
         let mut plot_histo_v_time = Plot::new();
 
-        let points = binner_time.steps_si_and_unit()
-            .map(|(t, _)| {
+        let points = binner_time.steps()
+            .map(|t| {
                 let histo_v = histograms.velocity.as_ref_at_major(t).unwrap();
 
                 (t, histo_v.mean())
@@ -214,15 +214,15 @@ fn main() {
     let plot_mechs = {
         let mut plot_mechs = Plot::new();
 
-        let total_at_time = binner_time.steps_si_and_unit()
-            .map(|(t, _)| histograms.mechanisms.as_ref_at_major(t).unwrap().subtotal())
+        let total_at_time = binner_time.steps()
+            .map(|t| histograms.mechanisms.as_ref_at_major(t).unwrap().subtotal())
             .collect::<Vec<_>>();
 
         for mech_name in binner_mechanisms.steps() {
             let histo_mech = histograms.mechanisms.as_ref_at_minor(mech_name).unwrap();
 
             let trace = Scatter::new(
-                    binner_time.steps_si_and_unit().map(|(t, _)| units::PS::from_si(t)).collect(),
+                    binner_time.steps().map(|t| units::PS::from_si(t)).collect(),
                     histo_mech.all_values().zip(total_at_time.iter()).map(|((_t, count), total)| 100. * count / total).collect(),
                 )
                 .mode(Mode::Lines)
@@ -247,15 +247,15 @@ fn main() {
     let plot_valleys = {
         let mut plot_valleys = Plot::new();
 
-        let total_at_time = binner_time.steps_si_and_unit()
-            .map(|(t, _)| histograms.valleys.as_ref_at_major(t).unwrap().subtotal())
+        let total_at_time = binner_time.steps()
+            .map(|t| histograms.valleys.as_ref_at_major(t).unwrap().subtotal())
             .collect::<Vec<_>>();
 
         for valley_name in binner_valleys.steps() {
             let histo_valley = histograms.valleys.as_ref_at_minor(valley_name).unwrap();
 
             let trace = Scatter::new(
-                    binner_time.steps_si_and_unit().map(|(t, _)| units::PS::from_si(t)).collect(),
+                    binner_time.steps().map(|t| units::PS::from_si(t)).collect(),
                     histo_valley.all_values().zip(total_at_time.iter()).map(|((_t, count), total)| 100. * count / total).collect(),
                 )
                 .mode(Mode::Lines)

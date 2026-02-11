@@ -164,7 +164,7 @@ fn main() {
             let total = histograms.energy_histogram.total;
             let trace = Scatter::new(
                 histo_e.all_values().map(|(val, _time)| histo_e.binner.from_si(val)).collect(),
-                histo_e.all_values().map(|(_val, time)| (time / total / histo_e.binner.bin_size()).log10()).collect(),
+                histo_e.all_values().map(|(_val, time)| (time / total / histo_e.binner.bin_size_unit()).log10()).collect(),
                 )
                 .name(valley)
                 .line(Line::new().color(VALLEY_COLORS[idx]));
@@ -190,7 +190,7 @@ fn main() {
         let total = histo_v.total;
         let trace = Scatter::new(
             histo_v.all_values().into_iter().map(|(val, _time)| histo_v.binner.from_si(val)).collect(),
-            histo_v.all_values().into_iter().map(|(_val, time)| time / total / histo_v.binner.bin_size()).collect(),
+            histo_v.all_values().into_iter().map(|(_val, time)| time / total / histo_v.binner.bin_size_unit()).collect(),
             )
             .line(Line::new());
         plot_histo_v.add_trace(trace);

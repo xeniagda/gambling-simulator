@@ -50,7 +50,7 @@ pub mod units {
    #![allow(non_camel_case_types)]
 
     /// Type-level definitions of units
-    pub trait Unit: Copy + Send {
+    pub trait Unit: Copy + Send + std::fmt::Debug {
         /// Latex-formattable
         const NAME: &'static str;
         /// Value of the unit in SI
@@ -142,12 +142,12 @@ impl<U: Unit> UnitBinner<U> {
         }
     }
 
-    pub fn bin_size_si(&self) -> f64 {
+    pub fn bin_size(&self) -> f64 {
         (self.end_si - self.start_si) / self.count as f64
     }
 
-    pub fn bin_size(&self) -> f64 {
-        U::from_si(self.bin_size_si())
+    pub fn bin_size_unit(&self) -> f64 {
+        U::from_si(self.bin_size())
     }
 
     /// Convenience method for Self::U::to_si
@@ -162,11 +162,10 @@ impl<U: Unit> UnitBinner<U> {
 }
 
 impl<U: Unit + Debug + Clone> UnitBinner<U> {
-    /// (value_si, value_in_unit)
-    pub fn steps_si_and_unit(&self) -> impl Iterator<Item=(f64, f64)> {
+    /// in SI
+    pub fn steps(&self) -> impl Iterator<Item=f64> {
         (0..self.count).map(|idx| {
-            let val = self.unbin(idx).expect("Couldn't un-index value in range (should never happen)");
-            (val, U::from_si(val))
+            self.unbin(idx).expect("Couldn't un-index value in range (should never happen)")
         })
     }
 }
@@ -594,16 +593,16 @@ mod tests {
     fn test_unit_binner() {
         use units::Unit;
 
-        let binner: UnitBinner<units::EV> = UnitBinner::new(5., 10., 6);
-        let mut steps = binner.steps_si_and_unit();
+        let binner: UnitBinner<units::EV> = UnitBinner::new("E", 5., 10., 6);
+        let mut steps = binner.steps();
 
-        assert_eq_option_float_tuple!(steps.next(), Some((units::EV::to_si(5.), 5.)));
-        assert_eq_option_float_tuple!(steps.next(), Some((units::EV::to_si(6.), 6.)));
-        assert_eq_option_float_tuple!(steps.next(), Some((units::EV::to_si(7.), 7.)));
-        assert_eq_option_float_tuple!(steps.next(), Some((units::EV::to_si(8.), 8.)));
-        assert_eq_option_float_tuple!(steps.next(), Some((units::EV::to_si(9.), 9.)));
-        assert_eq_option_float_tuple!(steps.next(), Some((units::EV::to_si(10.), 10.)));
-        assert_eq_option_float_tuple!(steps.next(), None);
+        assert_eq_option_float!(steps.next(), Some(units::EV::to_si(5.)));
+        assert_eq_option_float!(steps.next(), Some(units::EV::to_si(6.)));
+        assert_eq_option_float!(steps.next(), Some(units::EV::to_si(7.)));
+        assert_eq_option_float!(steps.next(), Some(units::EV::to_si(8.)));
+        assert_eq_option_float!(steps.next(), Some(units::EV::to_si(9.)));
+        assert_eq_option_float!(steps.next(), Some(units::EV::to_si(10.)));
+        assert_eq_option_float!(steps.next(), None);
 
         assert_eq!(binner.bin(units::EV::to_si(5.0)), Ok(0));
         assert_eq!(binner.bin(units::EV::to_si(4.6)), Ok(0));
