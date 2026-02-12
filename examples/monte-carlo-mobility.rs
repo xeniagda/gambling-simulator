@@ -1,7 +1,7 @@
 #![allow(non_snake_case, mixed_script_confusables)] // for band names such as Γ and L etc
 
 use gambling_simulator::{consts::EV_TO_J, semiconductor::{Electron, Semiconductor, StepInfo}};
-use gambling_simulator::histogram::{generate_histogram_collection_struct, Histogram, Binner, Binner2D, UnitBinner, units, DiscreteBinner};
+use gambling_simulator::histogram::{generate_histogram_collection_struct, Histogram, Binner, Binner2D, UnitBinner, units, units::Unit, DiscreteBinner};
 
 use plotly::{common::{DashType, Line, Mode}, layout::Axis, Layout, Plot, Scatter};
 use rand::SeedableRng;
@@ -28,7 +28,7 @@ fn generate_histogram(
     mut step_info: StepInfo, // applied_field overwritten
 
     n_electrons: usize,
-    t_stop: f64,
+    (t_start, t_stop): (f64, f64),
 ) -> Histograms {
     let mut rng = ChaCha8Rng::from_os_rng();
 
@@ -49,15 +49,17 @@ fn generate_histogram(
                 t += dt;
                 let scatter_mech = electron.scatter(&step_info, &mut rng);
 
-                // Set histogram
-                let vx_now = electron.velocity()[0];
-                histo.velocity.add((efield, vx_now), dt);
-                histo.energy.add((efield, electron.energy()), dt);
+                if t > t_start {
+                    // Set histogram
+                    let vx_now = electron.velocity()[0];
+                    histo.velocity.add((efield, vx_now), dt);
+                    histo.energy.add((efield, electron.energy()), dt);
 
-                histo.valley.add((efield, electron.valley().name), dt);
-                if let Some(mech) = scatter_mech {
-                    histo.mechanism.add((efield, mech.name_short), 1.0);
-                } // ignore self-scatters
+                    histo.valley.add((efield, electron.valley().name), dt);
+                    if let Some(mech) = scatter_mech {
+                        histo.mechanism.add((efield, mech.name_short), 1.0);
+                    } // ignore self-scatters
+                }
             }
         }
     }
@@ -127,9 +129,10 @@ fn main() {
         }
     );
 
-    let n_electrons = 20;
-    let t_stop = 4e-12;
-    let n_threads = num_cpus::get();
+    let n_electrons = 50;
+    let t_start = 10e-12; // when to start recording statistics
+    let t_stop = 18e-12; // how long to simulate the carrier
+    let n_threads = 64; //num_cpus::get();
 
     let histo: Histograms = std::thread::scope(|scope| {
         let mut histo = Histograms {
@@ -142,7 +145,7 @@ fn main() {
         let mut handles = (0..n_threads).map(|thread_idx| {
             let (sample_sc, worker) = (sample_sc.clone(), histo.get_worker());
             let handle = scope.spawn(move || {
-                generate_histogram(thread_idx, sample_sc, worker, step_info, n_electrons, t_stop)
+                generate_histogram(thread_idx, sample_sc, worker, step_info, n_electrons, (t_start, t_stop))
             });
             (handle, thread_idx)
         }).collect::<Vec<_>>();
