@@ -267,7 +267,7 @@ impl<'sc> Electron<'sc> {
             maximum_rate: |el, en| el.rate_intra_ac_phonon(Some(en)),
             resulting_state: |e, r| e.scatter_isotropic(r, e.energy()),
         };
-        let intra_opt_phonon_abs= ScatteringMechanism {
+        let intra_opt_phonon_abs = ScatteringMechanism {
             name_full: "Intravalley optical phonon absorption",
             name_short: "intra opt. phonon abs.",
             rate: |e| e.rate_intra_opt_phonon(PhononType::Absorption, None),
@@ -276,7 +276,7 @@ impl<'sc> Electron<'sc> {
             // For absorption we gain energy from the phonon
             resulting_state: |e, r| e.scatter_mag2(r, e.energy() + e.valley().optical_phonon_energy),
         };
-        let intra_opt_phonon_em= ScatteringMechanism {
+        let intra_opt_phonon_em = ScatteringMechanism {
             name_full: "Intravalley optical phonon emission",
             name_short: "intra opt. phonon em.",
             rate: |e| e.rate_intra_opt_phonon(PhononType::Emission, None),
@@ -306,7 +306,7 @@ impl<'sc> Electron<'sc> {
                     maximum_rate: |el, en| el.rate_inter_opt_phonon(PhononType::Absorption, $dest_valley_idx, Some(en)),
                     // For absorption we gain energy from the phonon
                     resulting_state: |e, r| {
-                        let energy_after = e.energy() + e.valley().intervalley_phonon_energy[$dest_valley_idx] - (e.sc.valleys[$dest_valley_idx].energy - e.valley().energy);
+                        let energy_after = e.energy() + e.valley().energy - e.sc.valleys[$dest_valley_idx].energy + e.valley().intervalley_phonon_energy[$dest_valley_idx];
                         let mut e_ = e.clone();
                         e_.valley_idx = $dest_valley_idx;
                         e_.scatter_isotropic(r, energy_after)
@@ -322,7 +322,7 @@ impl<'sc> Electron<'sc> {
                     maximum_rate: |el, en| el.rate_inter_opt_phonon(PhononType::Emission, $dest_valley_idx, Some(en)),
                     // For absorption we gain energy from the phonon
                     resulting_state: |e, r| {
-                        let energy_after = e.energy() - e.valley().intervalley_phonon_energy[$dest_valley_idx] - (e.sc.valleys[$dest_valley_idx].energy - e.valley().energy);
+                        let energy_after = e.energy() + e.valley().energy - e.sc.valleys[$dest_valley_idx].energy - e.valley().intervalley_phonon_energy[$dest_valley_idx];
                         let mut e_ = e.clone();
                         e_.valley_idx = $dest_valley_idx;
                         e_.scatter_isotropic(r, energy_after)
@@ -360,7 +360,7 @@ impl<'sc> Electron<'sc> {
         }
     }
 
-    // Resulting state after a collision where the probability of a state k' is proportional to |k-k'|^⁻²
+    // Resulting state after a collision where the probability of a state k' is proportional to |k-k'|⁻²
     pub fn scatter_mag2<R: Rng>(&self, rng: &mut R, res_energy: f64) -> Electron<'sc> {
         let kmag = self.k.iter().map(|x| x.powi(2)).sum::<f64>().sqrt();
         let k_res_mag = self.valley().kmag_for_e(res_energy);
@@ -368,10 +368,14 @@ impl<'sc> Electron<'sc> {
         // create a coordinate system with zz = k
         let coord_sys = CoordSystem::given_z(self.k);
 
-        // Pick a point on the unit sphere weighted by |k' · zz - alpha|⁻²
-        let alpha = kmag / k_res_mag;
+        // Pick a point on the unit sphere weighted the distance to k' taken in direction zz
+        let x = kmag / k_res_mag;
+
         let r = rng.random_range(0f64..=1f64);
-        let theta = ((r * (2.*alpha.powi(2) + 2.) - (alpha + 1.).powi(2)) / (4.*r*alpha - (alpha + 1.).powi(2))).acos();
+
+        let costheta = -1./(2.*x) * (-1. - x.powi(2) + (x-1.).powi(2) * ((x+1.)/(x-1.)).abs().powf(2. * r));
+
+        let theta = costheta.acos();
         let phi = rng.random_range(0. ..= 2.*PI);
 
         let k_res = coord_sys.cylidrical(k_res_mag, theta, phi);
