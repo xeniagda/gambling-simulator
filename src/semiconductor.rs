@@ -145,22 +145,15 @@ pub struct Electron<'sc> {
 }
 
 impl<'sc> Electron<'sc> {
-    // electron with average temperature of the lattice
-    pub fn thermalized<R: Rng>(rng: &mut R, sc: &'sc Semiconductor, valley_idx: usize, pos: [f64; 3]) -> Self {
+    /// Electron with average temperature of the lattice and a specified drift velocity
+    pub fn thermalized<R: Rng>(rng: &mut R, sc: &'sc Semiconductor, valley_idx: usize, pos: [f64; 3], drift: [f64; 3]) -> Self {
         let valley = &sc.valleys[valley_idx];
-        let var = BOLTZMANN * sc.temperature / valley.effective_mass();
+        let stddev = (BOLTZMANN * sc.temperature / valley.effective_mass()).sqrt();
 
-        // TODO: Sample normal distribution instead of uniform
-        //
-        // [a, b] has var 1/12(b-a)^2
-        // [-a, a] has var 1/12(2a)^2 = 1/3 a^2
-        // a = 3sqrt(var)
-
-        let distr = rand_distr::Normal::new(0., var.sqrt()).unwrap();
-        let vx = rng.sample(&distr);
-        let vy = rng.sample(&distr);
-        let vz = rng.sample(&distr);
-
+        let distr = rand_distr::Normal::new(0., stddev).unwrap();
+        let vx = rng.sample(&distr) + drift[0];
+        let vy = rng.sample(&distr) + drift[1];
+        let vz = rng.sample(&distr) + drift[2];
 
         let vtok = valley.effective_mass() / PLANCK_BAR_SI;
 
@@ -170,6 +163,20 @@ impl<'sc> Electron<'sc> {
             k: [vtok * vx, vtok * vy, vtok * vz],
             pos,
         }
+    }
+
+    /// Very rough model trying to capture the distribution of electrons in bulk semiconductor at a certain field strength
+    pub fn thermalized_in_field<R: Rng>(rng: &mut R, sc: &'sc Semiconductor, pos: [f64; 3], efield: [f64; 3]) -> Self {
+        let efield_mag = efield.iter().map(|x| x.powi(2)).sum::<f64>().sqrt();
+        if efield_mag < 100. {
+            return Self::thermalized(rng, sc, 0, pos, [0., 0., 0.,]);
+        }
+        let L_ratio = 0.9 * (efield_mag/0.7e6).tanh().powf(2.4);
+
+        let valley_idx = if rng.random::<f64>() < L_ratio { 1 } else { 0 };
+
+        let model_drift = sc.approx_drift_velocity(efield);
+        Self::thermalized(rng, sc, valley_idx, pos, model_drift)
     }
 
     pub fn valley(&self) -> &Valley {

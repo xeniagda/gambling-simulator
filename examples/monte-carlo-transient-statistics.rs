@@ -35,11 +35,10 @@ fn generate_histogram(
 ) -> Histograms {
     let mut rng = ChaCha8Rng::from_os_rng();
 
-    let Γ_valley_idx = sc.valleys.iter().position(|x| x.name == "Γ").expect("No Γ valley in GaAs");
     let t_stop = histograms.velocity.binner.major.end_si;
 
     for _run in tqdm(0..n_electrons).desc(Some(format!("Thread #{thread_idx: <4}"))).style(tqdm::Style::ASCII) {
-        let mut electron = Electron::thermalized(&mut rng, &sc, Γ_valley_idx, [0., 0., 0.]);
+        let mut electron = Electron::thermalized_in_field(&mut rng, &sc, [0., 0., 0.], step_info.applied_field);
 
         let mut t = 0.0;
         while t < t_stop {
