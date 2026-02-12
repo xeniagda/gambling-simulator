@@ -112,6 +112,23 @@ impl Semiconductor {
             impurity_density: 1.0e14 * 1e6, // 1e17 cm^-3 used in [multipliers-and-mixers-2014]
         }
     }
+
+    /// Approximate mobility using the model from Analysis and simulation of semiconductor devices, 1984 (source for graph in [mixers-and-multipliers-2014])
+    /// Works for high and low field within around 10% accuracy to this simulation
+    pub fn approx_drift_velocity(&self, efield: [f64; 3]) -> [f64; 3] {
+        let efield_mag = efield.iter().map(|x| x.powi(2)).sum::<f64>().sqrt();
+
+        let mobility_linear = 0.85; // m/s / (V/m)
+        let efield_crit: f64 = 4e5;
+        let v_sat = 8.5e4;
+        let v_model = -(mobility_linear * efield_mag + v_sat * efield_mag.powi(4)/efield_crit.powi(4)) / (1. + efield_mag.powi(4)/efield_crit.powi(4));
+
+        [
+            v_model * efield[0] / efield_mag,
+            v_model * efield[1] / efield_mag,
+            v_model * efield[2] / efield_mag,
+        ]
+    }
 }
 
 #[derive(Clone)]
@@ -494,10 +511,13 @@ impl<'sc> Electron<'sc> {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct StepInfo {
     pub applied_field: [f64; 3],
     pub maximum_assumed_energy: f64,
+}
+
+impl StepInfo {
 }
 
 pub struct FlightResult {

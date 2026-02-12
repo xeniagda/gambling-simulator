@@ -238,15 +238,13 @@ fn main() {
             let histo_v = histo.velocity.as_ref_at_major(efield).unwrap();
             let mean_v = histo_v.mean();
 
-            // from Analysis and simulation of semiconductor devices, 1984 (source for graph in [mixers-and-multipliers-2014])
+            let v_model = sample_sc.approx_drift_velocity([efield, 0., 0.,])[0];
 
-            let mobility_linear = 0.85; // m/s / (V/m)
-            let efield_crit: f64 = 4e5;
-            let v_sat = 8.5e4;
-            let v_model = (mobility_linear * efield + v_sat * efield.powi(4)/efield_crit.powi(4)) / (1. + efield.powi(4)/efield_crit.powi(4));
-
-
-            (binner_field.from_si(efield), -binner_velocity.from_si(mean_v), binner_velocity.from_si(v_model))
+            (
+                binner_field.from_si(efield),
+                binner_velocity.from_si(-mean_v),
+                binner_velocity.from_si(-v_model)
+            )
         }).collect::<Vec<_>>();
 
         let trace_meas= Scatter::new(
@@ -288,17 +286,12 @@ fn main() {
             let histo_v = histo.velocity.as_ref_at_major(efield).unwrap();
             let mean_v = histo_v.mean();
 
-            // from Analysis and simulation of semiconductor devices, 1984 (source for graph in [mixers-and-multipliers-2014])
-
-            let mobility_linear = 0.85; // m/s / (V/m)
-            let efield_crit: f64 = 4e5;
-            let v_sat = 8.5e4;
-            let v_model = (mobility_linear * efield + v_sat * efield.powi(4)/efield_crit.powi(4)) / (1. + efield.powi(4)/efield_crit.powi(4));
+            let v_model = sample_sc.approx_drift_velocity([efield, 0., 0.,])[0];
 
             (
                 binner_field.from_si(efield),
                 units::CM_SQUARED_PER_VOLT_SECOND::from_si(-mean_v / efield),
-                units::CM_SQUARED_PER_VOLT_SECOND::from_si(v_model / efield),
+                units::CM_SQUARED_PER_VOLT_SECOND::from_si(-v_model / efield),
             )
         }).collect::<Vec<_>>();
 
