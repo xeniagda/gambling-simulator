@@ -101,6 +101,14 @@ pub mod units {
     }
 
     #[derive(Clone, Copy, Debug)]
+    pub struct CM_SQUARED_PER_VOLT_SECOND;
+    impl Unit for CM_SQUARED_PER_VOLT_SECOND {
+        const NAME: &'static str = "cm^2 / V s";
+
+        const IN_SI: f64 = 1e-4;
+    }
+
+    #[derive(Clone, Copy, Debug)]
     pub struct PS;
     impl Unit for PS {
         const NAME: &'static str = "ps";

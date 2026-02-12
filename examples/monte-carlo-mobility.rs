@@ -231,8 +231,8 @@ fn main() {
         plot_energy
     };
 
-    let plot_mobility = {
-        let mut plot_mobility = Plot::new();
+    let plot_velocity = {
+        let mut plot_velocity = Plot::new();
 
         let mobility_points = binner_field.steps().map(|efield| {
             let histo_v = histo.velocity.as_ref_at_major(efield).unwrap();
@@ -240,7 +240,7 @@ fn main() {
 
             // from Analysis and simulation of semiconductor devices, 1984 (source for graph in [mixers-and-multipliers-2014])
 
-            let mobility_linear = 0.9; // m/s / (V/m)
+            let mobility_linear = 0.85; // m/s / (V/m)
             let efield_crit: f64 = 4e5;
             let v_sat = 8.5e4;
             let v_model = (mobility_linear * efield + v_sat * efield.powi(4)/efield_crit.powi(4)) / (1. + efield.powi(4)/efield_crit.powi(4));
@@ -250,6 +250,59 @@ fn main() {
         }).collect::<Vec<_>>();
 
         let trace_meas= Scatter::new(
+                mobility_points.iter().map(|(v, _meas, _ideal)| *v).collect(),
+                mobility_points.iter().map(|(_v, meas, _ideal)| *meas).collect(),
+            )
+            .mode(Mode::Lines)
+            .name("Simulated")
+            .line(Line::new().color("blue"));
+
+        let trace_ideal = Scatter::new(
+                mobility_points.iter().map(|(v, _meas, _ideal)| *v).collect(),
+                mobility_points.iter().map(|(_v, _meas, ideal)| *ideal).collect(),
+            )
+            .mode(Mode::Lines)
+            .name("Reference")
+            .line(Line::new().color("orange").dash(DashType::Dot));
+        plot_velocity.add_trace(trace_meas);
+        plot_velocity.add_trace(trace_ideal);
+
+        plot_velocity.set_layout(
+            Layout::new()
+                .width(1200).height(800)
+                .title("Velocity")
+                .x_axis(
+                    Axis::new().title("$E_x [kV/cm]$")
+                )
+                .y_axis(
+                    Axis::new().title(r"$\vert v_x\vert [10^6 cm/s]$")
+                )
+        );
+        plot_velocity
+    };
+
+    let plot_mobility = {
+        let mut plot_mobility = Plot::new();
+
+        let mobility_points = binner_field.steps().map(|efield| {
+            let histo_v = histo.velocity.as_ref_at_major(efield).unwrap();
+            let mean_v = histo_v.mean();
+
+            // from Analysis and simulation of semiconductor devices, 1984 (source for graph in [mixers-and-multipliers-2014])
+
+            let mobility_linear = 0.85; // m/s / (V/m)
+            let efield_crit: f64 = 4e5;
+            let v_sat = 8.5e4;
+            let v_model = (mobility_linear * efield + v_sat * efield.powi(4)/efield_crit.powi(4)) / (1. + efield.powi(4)/efield_crit.powi(4));
+
+            (
+                binner_field.from_si(efield),
+                units::CM_SQUARED_PER_VOLT_SECOND::from_si(-mean_v / efield),
+                units::CM_SQUARED_PER_VOLT_SECOND::from_si(v_model / efield),
+            )
+        }).collect::<Vec<_>>();
+
+        let trace_meas = Scatter::new(
                 mobility_points.iter().map(|(v, _meas, _ideal)| *v).collect(),
                 mobility_points.iter().map(|(_v, meas, _ideal)| *meas).collect(),
             )
@@ -275,7 +328,7 @@ fn main() {
                     Axis::new().title("$E_x [kV/cm]$")
                 )
                 .y_axis(
-                    Axis::new().title(r"$\vert v_x\vert [10^6 cm/s]$")
+                    Axis::new().title(r"$\mu [cm^2 / Vs]$")
                 )
         );
         plot_mobility
@@ -350,5 +403,5 @@ fn main() {
     };
 
     let name = format!("mobility-ni-1e{}", (sample_sc.impurity_density/1e6).log10().round());
-    write_plots("monte-carlo", name, [plot_histo_v, plot_energy, plot_mobility, plot_mechanisms, plot_valley]);
+    write_plots("monte-carlo", name, [plot_histo_v, plot_energy, plot_velocity, plot_mobility, plot_mechanisms, plot_valley]);
 }
