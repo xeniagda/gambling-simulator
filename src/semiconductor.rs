@@ -105,9 +105,9 @@ impl Semiconductor {
             lattice_constant: a,
             density: 5370.,
             sound_velocity: 5220.,
-            relative_dielectric_static: 12.9,
-            relative_dielectric_hf: 10.92,
-            acoustic_deformation_potential: 5.0 * EV_TO_J, // Value from [multipliers-and-mixers-2014]
+            relative_dielectric_static: 12.53,
+            relative_dielectric_hf: 10.82,
+            acoustic_deformation_potential: 7.0 * EV_TO_J, // Value from [multipliers-and-mixers-2014]
             intervalley_deformation_potential: 1e11  * EV_TO_J, // value from [monte-carlo-review-1991], is way bigger than in [multipliers-and-mixers] ??
             impurity_density: 1.0e14 * 1e6, // 1e17 cm^-3 used in [multipliers-and-mixers-2014]
         }
