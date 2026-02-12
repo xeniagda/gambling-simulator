@@ -439,9 +439,11 @@ impl<'h, B: Binner> HistogramRef<'h, B> {
     }
 
     /// Total time for this slice
-    /// TODO: Check this
     pub fn subtotal(&self) -> f64 {
-        self.storage.iter().sum()
+        (0..self.binner.count())
+            .map(|idx| self.storage[self.stride * idx])
+            .sum()
+
     }
 }
 
