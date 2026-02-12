@@ -414,7 +414,7 @@ impl<'sc> Electron<'sc> {
     pub fn rate_intra_ac_phonon(&self, E: Option<f64>) -> f64 {
         let valley = self.valley();
         let E = E.unwrap_or_else(|| self.energy());
-        2f64.sqrt() * valley.effective_mass().powf(1.5) * BOLTZMANN * self.sc.temperature * self.sc.acoustic_deformation_potential.powi(2)
+        0.5f64.sqrt() * valley.effective_mass().powf(1.5) * BOLTZMANN * self.sc.temperature * self.sc.acoustic_deformation_potential.powi(2)
             / (PI * PLANCK_BAR_SI.powi(4) * self.sc.sound_velocity.powi(2) * self.sc.density)
             * E.sqrt() * (1. + 2. * E * valley.nonparabolicity) * (1. + E * valley.nonparabolicity).sqrt()
     }
