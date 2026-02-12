@@ -522,20 +522,16 @@ impl<'sc> Electron<'sc> {
         // TODO: f64::EPSILON is not the smallest number that we can ln without getting zero. find it
         let t = -1./Γ * rng.random_range(0f64 ..= 1f64).ln();
 
-        // Calculate
-        let a = [
-            -ELECTRON_CHARGE * info.applied_field[0] / self.valley().effective_mass(),
-            -ELECTRON_CHARGE * info.applied_field[1] / self.valley().effective_mass(),
-            -ELECTRON_CHARGE * info.applied_field[2] / self.valley().effective_mass(),
+        let force = [
+            -ELECTRON_CHARGE * info.applied_field[0],
+            -ELECTRON_CHARGE * info.applied_field[1],
+            -ELECTRON_CHARGE * info.applied_field[2],
         ];
-        let v = self.velocity();
-        let e_nonparab_before = PLANCK_BAR_SI.powi(2) * self.k_mag() / (2. * self.valley().effective_mass());
-        let accel_factor = 1. + 2. * self.valley().nonparabolicity * e_nonparab_before;
 
         let k_acceleration = [
-            self.valley().effective_mass() / PLANCK_BAR_SI * accel_factor * a[0],
-            self.valley().effective_mass() / PLANCK_BAR_SI * accel_factor * a[1],
-            self.valley().effective_mass() / PLANCK_BAR_SI * accel_factor * a[2],
+            force[0] / PLANCK_BAR_SI,
+            force[1] / PLANCK_BAR_SI,
+            force[2] / PLANCK_BAR_SI,
         ];
 
         self.k = [
@@ -543,6 +539,15 @@ impl<'sc> Electron<'sc> {
             self.k[1] + t * k_acceleration[1],
             self.k[2] + t * k_acceleration[2],
         ];
+
+        // TODO: Calculate group velocity and group acceleration
+        let v = self.velocity();
+        let a = [
+            force[0] / self.valley().effective_mass(),
+            force[1] / self.valley().effective_mass(),
+            force[2] / self.valley().effective_mass(),
+        ];
+
         self.pos = [
             self.pos[0] + v[0] * t + a[0] * t.powi(2) / 2.,
             self.pos[1] + v[1] * t + a[1] * t.powi(2) / 2.,
