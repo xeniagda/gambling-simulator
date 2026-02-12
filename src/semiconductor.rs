@@ -183,7 +183,7 @@ impl<'sc> Electron<'sc> {
     pub fn velocity(&self) -> [f64; 3] {
         let energy = self.energy();
         let nonparab = 1. + 2. * self.valley().nonparabolicity * energy;
-        let f = PLANCK_BAR_SI / self.valley().effective_mass() * nonparab;
+        let f = PLANCK_BAR_SI / self.valley().effective_mass() / nonparab;
         [f * self.k[0], f * self.k[1], f * self.k[2]]
     }
 }
