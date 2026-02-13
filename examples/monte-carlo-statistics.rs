@@ -1,6 +1,6 @@
 #![allow(non_snake_case, mixed_script_confusables)] // for band names such as Γ and L etc
 
-use gambling_simulator::{consts::EV_TO_J, semiconductor::{Electron, Semiconductor, StepInfo}, units, units::Unit};
+use gambling_simulator::{semiconductor::{Electron, Semiconductor, StepInfo}, units, units::Unit};
 use gambling_simulator::histogram::{generate_histogram_collection_struct, Histogram, Binner, DiscreteBinner, UnitBinner, Binner2D};
 
 use plotly::{Layout, Plot, Scatter, common::{Line, Marker, Mode}, layout::Axis};
@@ -67,7 +67,7 @@ fn main() {
 
     let step_info = StepInfo {
         applied_field: [e_x_si, 0., 0.],
-        maximum_assumed_energy: 2.0 * EV_TO_J,
+        maximum_assumed_energy: units::EV::to_si(2.0),
     };
 
     let mechanism_names: Vec<&'static str> = {

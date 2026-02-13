@@ -1,6 +1,7 @@
 #![allow(non_snake_case, mixed_script_confusables)] // for band names such as Γ and L etc
 
-use gambling_simulator::{consts::{EV_TO_J, PLANCK_BAR_SI}, semiconductor::{Electron, Semiconductor, StepInfo}};
+use gambling_simulator::{consts::PLANCK_BAR_SI, semiconductor::{Electron, Semiconductor, StepInfo}};
+use gambling_simulator::units::{Unit, EV, MEV};
 
 use plotly::{common::{Marker, MarkerSymbol, Mode}, layout::Axis, Layout, Plot, Scatter};
 use rand::SeedableRng;
@@ -14,7 +15,7 @@ fn main() {
     let sample_sc = Semiconductor::GaAs(300.0);
     let Γ_valley_idx = sample_sc.valleys.iter().position(|x| x.name == "Γ").expect("No Γ valley in GaAs");
 
-    let energy_max = 2. * EV_TO_J;
+    let energy_max = EV::to_si(2.);
     let e_x = 0.0; // kV/cm
 
     let step_info = StepInfo {
@@ -50,7 +51,7 @@ fn main() {
             electron.pos[0] / sample_sc.lattice_constant, electron.pos[1] / sample_sc.lattice_constant, electron.pos[2] / sample_sc.lattice_constant,
             electron.velocity()[0] / sample_sc.lattice_constant * 1e-12, electron.velocity()[1] / sample_sc.lattice_constant * 1e-12, electron.velocity()[2] / sample_sc.lattice_constant * 1e-12,
             electron.k[0] * sample_sc.lattice_constant, electron.k[1] * sample_sc.lattice_constant, electron.k[2] * sample_sc.lattice_constant,
-            electron.energy_eV() * 1e3, electron.valley().name,
+            MEV::from_si(electron.energy()), electron.valley().name,
         );
 
         // draw continuous trace
@@ -102,7 +103,7 @@ fn main() {
                 "    BOING! {}: New state: k = ({:.4}, {:.4}, {:.4}) a⁻¹, E = {:.4} meV (valley {})",
                 mech.name_short,
                 electron.k[0] * sample_sc.lattice_constant, electron.k[1] * sample_sc.lattice_constant, electron.k[2] * sample_sc.lattice_constant,
-                electron.energy_eV() * 1e3, electron.valley().name,
+                MEV::from_si(electron.energy()), electron.valley().name,
             );
 
             let scatter = Scatter::new(
@@ -111,7 +112,7 @@ fn main() {
                 )
                 .mode(Mode::Markers)
                 .marker(Marker::new().color("red").symbol(MarkerSymbol::X))
-                .name(format!("{} ({:.4} meV before)", mech.name_short, el_before.energy_eV() * 1e3));
+                .name(format!("{} ({:.4} meV before)", mech.name_short, MEV::from_si(el_before.energy())));
             plot_traces.add_trace(scatter);
         }
     }

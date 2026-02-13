@@ -2,8 +2,8 @@
 
 use std::f64::consts::PI;
 
-use gambling_simulator::consts::EV_TO_J;
 use gambling_simulator::semiconductor::{Electron, Semiconductor};
+use gambling_simulator::units::{Unit, EV};
 
 mod common;
 use common::write_plots;
@@ -24,7 +24,7 @@ fn main() {
     let Γ_valley_idx = sample_sc.valleys.iter().position(|x| x.name == "Γ").expect("No Γ valley in GaAs");
     let Γ_valley = &sample_sc.valleys[Γ_valley_idx];
 
-    let e_init = 700e-3 * EV_TO_J;
+    let e_init = EV::to_si(700e-3);
     let k_mag = Γ_valley.kmag_for_e(e_init);
 
     let n = 500;

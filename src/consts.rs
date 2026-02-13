@@ -15,10 +15,3 @@ pub const ELECTRON_MASS: f64 = 9.1093837e-31;
 #[allow(unused)]
 pub const ELECTRON_CHARGE: f64 = 1.602176e-19;
 
-
-
-#[allow(unused)]
-pub const EV_TO_J: f64 = 1.602176e-19;
-#[allow(unused)]
-pub const J_TO_EV: f64 = 6.241509e18;
-

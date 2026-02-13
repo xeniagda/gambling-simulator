@@ -1,6 +1,8 @@
 use std::f64::consts::PI;
 use rand::Rng;
 
+use crate::units::{Unit, EV, MEV};
+
 use crate::consts::*;
 
 /// Valley in the conduction band
@@ -71,20 +73,20 @@ impl Semiconductor {
             name: "Γ",
             k_center: vec![[0., 0., 0.]].into(),
             effective_mass_to_m0: 0.067,
-            energy: 1.42 * EV_TO_J,
-            nonparabolicity: 0.61 / EV_TO_J,
-            optical_phonon_energy: 36.13e-3 * EV_TO_J,
-            intervalley_phonon_energy: vec![0., 27.8e-3 * EV_TO_J, 29.3e-3 * EV_TO_J].into_boxed_slice(),
+            energy: EV::to_si(1.42),
+            nonparabolicity: 1. / EV::to_si(1./0.61),
+            optical_phonon_energy: MEV::to_si(36.13),
+            intervalley_phonon_energy: vec![0., MEV::to_si(27.8), MEV::to_si(29.3)].into_boxed_slice(),
         };
         let L_xyz = 1.61993 / a;
         let L = Valley {
             name: "L",
             k_center: vec![[L_xyz, L_xyz, L_xyz,], [-L_xyz, L_xyz, L_xyz,], [L_xyz, -L_xyz, L_xyz,], [L_xyz, L_xyz, -L_xyz,]].into(),
             effective_mass_to_m0: 0.35,
-            energy: 1.729 * EV_TO_J,
-            nonparabolicity: 0.222 / EV_TO_J,
-            optical_phonon_energy: 36.13e-3 * EV_TO_J,
-            intervalley_phonon_energy: vec![27.8e-3 * EV_TO_J, 27.8e-3 * EV_TO_J, 29.3e-3 * EV_TO_J].into_boxed_slice(),
+            energy: EV::to_si(1.729),
+            nonparabolicity: 1. / EV::to_si(1. / 0.222),
+            optical_phonon_energy: MEV::to_si(36.13),
+            intervalley_phonon_energy: vec![MEV::to_si(27.8), MEV::to_si(27.8), MEV::to_si(29.3)].into_boxed_slice(),
         };
         // TODO: X is not quite the right name for this valley. The valley on the Δ-line (from Γ to X) but not all the way to X.
         // In [monte-carlo-book-1989] they call this valley the Δ-valley, in [multipliers-and-mixers-2014] they call it the X valley.
@@ -94,10 +96,10 @@ impl Semiconductor {
             name: "X",
             k_center: vec![[X_xyz, 0., 0.,], [0., X_xyz, 0.,], [0., 0., X_xyz,]].into(),
             effective_mass_to_m0: 0.85,
-            energy: 1.906 * EV_TO_J,
-            nonparabolicity: 0.061 / EV_TO_J,
-            optical_phonon_energy: 36.13e-3 * EV_TO_J,
-            intervalley_phonon_energy: vec![29.3e-3 * EV_TO_J, 29.3e-3 * EV_TO_J, 29.3e-3 * EV_TO_J].into_boxed_slice(),
+            energy: EV::to_si(1.906),
+            nonparabolicity: 1. / EV::to_si(0.061),
+            optical_phonon_energy: MEV::to_si(36.13),
+            intervalley_phonon_energy: vec![MEV::to_si(29.3), MEV::to_si(29.3), MEV::to_si(29.3)].into_boxed_slice(),
         };
         Semiconductor {
             valleys: vec![Γ, L, X].into(),
@@ -107,8 +109,8 @@ impl Semiconductor {
             sound_velocity: 5220.,
             relative_dielectric_static: 12.53,
             relative_dielectric_hf: 10.82,
-            acoustic_deformation_potential: 7.0 * EV_TO_J, // Value from [multipliers-and-mixers-2014]
-            intervalley_deformation_potential: 1e11  * EV_TO_J, // value from [monte-carlo-review-1991], is way bigger than in [multipliers-and-mixers] ??
+            acoustic_deformation_potential: EV::to_si(7.0), // Value from [multipliers-and-mixers-2014]
+            intervalley_deformation_potential: EV::to_si(1e11), // value from [monte-carlo-review-1991], is way bigger than in [multipliers-and-mixers] ??
             impurity_density: 1.0e14 * 1e6, // 1e17 cm^-3 used in [multipliers-and-mixers-2014]
         }
     }
@@ -197,10 +199,6 @@ impl<'sc> Electron<'sc> {
         // all local variables in SI units
         let spherical_energy = PLANCK_BAR_SI.powi(2) * self.k_mag2() / (2. * valley.effective_mass());
         (-1. + (1. + 4. * spherical_energy * valley.nonparabolicity).sqrt()) / (2. * valley.nonparabolicity)
-    }
-
-    pub fn energy_eV(&self) -> f64 {
-        self.energy() * J_TO_EV
     }
 
     /// Velocity vector, taking into account nonparabolicity
@@ -306,7 +304,7 @@ impl<'sc> Electron<'sc> {
             rate: |e| e.rate_intra_opt_phonon(PhononType::Emission, None),
             // The maximum is somewhere around 130meV
             // Add a factor of 2 for safety (:
-            maximum_rate: |el, _en| 2. * el.rate_intra_opt_phonon(PhononType::Emission, Some(0.125 * EV_TO_J)),
+            maximum_rate: |el, _en| 2. * el.rate_intra_opt_phonon(PhononType::Emission, Some(EV::to_si(0.125))),
             // For absorption we gain energy from the phonon
             resulting_state: |e, r| e.scatter_mag2(r, e.energy() - e.valley().optical_phonon_energy),
         };
@@ -462,7 +460,7 @@ impl<'sc> Electron<'sc> {
         // If E is too low we will subsequently divide by zero
         // However, the graph converges as E -> 0⁺
         // So we cap it at a low value
-        let E = E.max(1e-6 * EV_TO_J);
+        let E = E.max(EV::to_si(1e-6));
         let γE = E * (1. + α * E);
         let γE_ = E_ * (1. + α * E_);
 

@@ -1,6 +1,6 @@
 #![allow(non_snake_case, mixed_script_confusables)] // for band names such as Γ and L etc
 
-use gambling_simulator::{consts::EV_TO_J, semiconductor::{Electron, Semiconductor, StepInfo}, units, units::Unit};
+use gambling_simulator::{semiconductor::{Electron, Semiconductor, StepInfo}, units, units::Unit};
 use gambling_simulator::histogram::{generate_histogram_collection_struct, Histogram, Binner, Binner2D, UnitBinner, DiscreteBinner};
 
 use plotly::{common::{DashType, Line, Mode}, layout::Axis, Layout, Plot, Scatter};
@@ -68,7 +68,7 @@ fn generate_histogram(
 fn main() {
     let sample_sc = Semiconductor::GaAs(300.0);
 
-    let energy_max = 2. * EV_TO_J;
+    let energy_max = units::EV::to_si(2.);
 
     let step_info = StepInfo {
         applied_field: [0., 0., 0.], // will be overwritten

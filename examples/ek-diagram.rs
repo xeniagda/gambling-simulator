@@ -1,7 +1,7 @@
 #![allow(non_snake_case, mixed_script_confusables)] // for band names such as Γ and L etc
 
-use gambling_simulator::consts::J_TO_EV;
 use gambling_simulator::semiconductor::{Electron, Semiconductor};
+use gambling_simulator::units::{Unit, EV};
 
 use plotly::common::{Line, Mode};
 use plotly::layout::Axis;
@@ -57,7 +57,7 @@ fn main() {
             let dir_mul = if which == Before { 1. } else { -1. };
             let scatter = Scatter::new(
                     electrons.iter().map(|el| (dir_mul * el.k_mag() + cum_x) * sample_sc.lattice_constant).collect(),
-                    electrons.iter().map(|el| (el.energy() + this.energy) * J_TO_EV).collect(),
+                    electrons.iter().map(|el| EV::from_si(el.energy() + this.energy)).collect(),
                 )
                 .mode(Mode::Lines)
                 .line(Line::new().color(col))

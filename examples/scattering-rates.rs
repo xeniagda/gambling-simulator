@@ -1,6 +1,6 @@
 #![allow(non_snake_case, mixed_script_confusables)]
 
-use gambling_simulator::consts::EV_TO_J;
+use gambling_simulator::units::{Unit, EV, MEV};
 use gambling_simulator::semiconductor::{Electron, PhononType, Semiconductor};
 
 mod common;
@@ -19,7 +19,7 @@ fn main() {
     let n = 500;
 
     // outside this and the bands stop being correct
-    let e_init = 3. * EV_TO_J;
+    let e_init = EV::to_si(3.);
     let k_mag = sample_sc.valleys[Γ_valley_idx].kmag_for_e(e_init);
     let kxs = linspace(0., k_mag, n).collect::<Vec<_>>();
 
@@ -35,15 +35,15 @@ fn main() {
             pos: [0., 0., 0.],
         }).collect::<Vec<_>>();
 
-        if let Some(max_energy) = electrons.iter().map(|e| e.energy_eV()).max_by(f64::total_cmp) {
-            eprintln!("  Maximum energy: {:.4} meV", 1e3 * max_energy);
+        if let Some(max_energy) = electrons.iter().map(|e| e.energy()).max_by(f64::total_cmp) {
+            eprintln!("  Maximum energy: {:.4} meV", MEV::from_si(max_energy));
         }
 
         let mut plot_rate_valley = Plot::new();
 
         let mut plot_rate_funtion = |name: &str, f: Box<dyn Fn(&Electron) -> f64>, (mode, dash, color): (Mode, DashType, &str)| {
             plot_rate_valley.add_trace(Scatter::new (
-                    electrons.iter().map(|e| e.energy_eV()).collect(),
+                    electrons.iter().map(|e| EV::from_si(e.energy())).collect(),
                     electrons.iter().map(|e| f(e).max(1.0).log10()).collect(),
                 )
                 .mode(mode)
@@ -61,15 +61,15 @@ fn main() {
                 eprintln!("nothing!");
                 return;
             };
-            eprint!("rate = {: >8.4} ps⁻¹ for E = {: >8.4} meV", max_rate / 1.0e12, 1e3 * max_e.energy_eV());
-            if let Some(true) = electrons.iter().map(|e| e.energy_eV()).max_by(|e1, e2| e1.total_cmp(e2)).map(|e| e == max_e.energy_eV()) {
+            eprint!("rate = {: >8.4} ps⁻¹ for E = {: >8.4} meV", max_rate / 1.0e12, MEV::from_si(max_e.energy()));
+            if let Some(true) = electrons.iter().map(|e| e.energy()).max_by(|e1, e2| e1.total_cmp(e2)).map(|e| e == max_e.energy()) {
                 eprint!(" (maximum energy)");
             }
             // Check for NaN's
             if let Some(nan_energy) = electrons
                 .iter()
-                .find_map(|e| f(e).is_nan().then(|| e.energy_eV())) {
-                eprint!(" [NaN at {: >8.4} meV]", 1e3 * nan_energy);
+                .find_map(|e| f(e).is_nan().then(|| e.energy())) {
+                eprint!(" [NaN at {: >8.4} meV]", MEV::from_si(nan_energy));
             }
             eprintln!();
         };
