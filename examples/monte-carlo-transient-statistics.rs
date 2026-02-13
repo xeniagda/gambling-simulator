@@ -1,7 +1,7 @@
 #![allow(non_snake_case, mixed_script_confusables)] // for band names such as Γ and L etc
 
-use gambling_simulator::{semiconductor::{Electron, Semiconductor, StepInfo}};
-use gambling_simulator::histogram::{generate_histogram_collection_struct, Histogram, UnitBinner, DiscreteBinner, Binner2D, units, Unit};
+use gambling_simulator::{semiconductor::{Electron, Semiconductor, StepInfo}, units, units::Unit};
+use gambling_simulator::histogram::{generate_histogram_collection_struct, Histogram, UnitBinner, DiscreteBinner, Binner2D};
 
 use plotly::{common::{Line, Mode}, layout::Axis, Layout, Plot, Scatter};
 use rand::SeedableRng;

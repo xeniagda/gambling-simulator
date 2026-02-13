@@ -2,4 +2,5 @@
 
 pub mod consts;
 pub mod semiconductor;
+pub mod units;
 pub mod histogram;

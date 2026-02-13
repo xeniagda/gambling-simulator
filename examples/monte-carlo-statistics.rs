@@ -1,7 +1,7 @@
 #![allow(non_snake_case, mixed_script_confusables)] // for band names such as Γ and L etc
 
-use gambling_simulator::{consts::EV_TO_J, histogram::units::KV_PER_CM, semiconductor::{Electron, Semiconductor, StepInfo}};
-use gambling_simulator::histogram::{generate_histogram_collection_struct, Histogram, Binner, DiscreteBinner, UnitBinner, Binner2D, units, units::Unit};
+use gambling_simulator::{consts::EV_TO_J, semiconductor::{Electron, Semiconductor, StepInfo}, units, units::Unit};
+use gambling_simulator::histogram::{generate_histogram_collection_struct, Histogram, Binner, DiscreteBinner, UnitBinner, Binner2D};
 
 use plotly::{Layout, Plot, Scatter, common::{Line, Marker, Mode}, layout::Axis};
 use rand::SeedableRng;
@@ -63,7 +63,7 @@ fn main() {
 
     let e_x = 10.; // kV/cm
 
-    let e_x_si = KV_PER_CM::to_si(e_x);
+    let e_x_si = units::KV_PER_CM::to_si(e_x);
 
     let step_info = StepInfo {
         applied_field: [e_x_si, 0., 0.],
