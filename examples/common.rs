@@ -5,12 +5,12 @@ use build_html::{Html, HtmlContainer, HtmlPage};
 pub const VALLEY_COLORS: [&str; 3] = ["black", "blue", "green"];
 
 #[allow(dead_code)]
-pub fn linspace(a: f64, b: f64, steps: u64) -> impl Iterator<Item = f64> {
+pub fn linspace(a: f64, b: f64, steps: usize) -> impl Iterator<Item = f64> {
     (0..steps).map(move |x| (x as f64) / (steps as f64) * (b - a) + a)
 }
 
 #[allow(dead_code)]
-pub fn linspace_incl(a: f64, b: f64, steps: u64) -> impl Iterator<Item = f64> {
+pub fn linspace_incl(a: f64, b: f64, steps: usize) -> impl Iterator<Item = f64> {
     (0..steps).map(move |x| (x as f64) / ((steps-1) as f64) * (b - a) + a)
 }
 
