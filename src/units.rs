@@ -16,53 +16,26 @@ pub trait Unit: Copy + Send + std::fmt::Debug {
     }
 }
 
-use crate::consts::EV_TO_J;
+macro_rules! make_unit {
+    ($name:ident, $pretty_name:expr, $value:expr) => {
+        #[derive(Clone, Copy, Debug)]
+        pub struct $name;
+        impl Unit for $name {
+            const NAME: &'static str = $pretty_name;
 
-#[derive(Clone, Copy, Debug)]
-pub struct EV;
-impl Unit for EV {
-    const NAME: &'static str = "eV";
-
-    const IN_SI: f64 = EV_TO_J;
+            const IN_SI: f64 = $value;
+        }
+    }
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct MEV;
-impl Unit for MEV {
-    const NAME: &'static str = "meV";
+make_unit!(PS, "ps", 1e-12);
 
-    const IN_SI: f64 = EV_TO_J * 1e-3;
-}
+const EV_TO_J: f64 = 1.602176e-19;
+make_unit!(EV, "eV", EV_TO_J);
+make_unit!(MEV, "meV", EV_TO_J * 1e-3);
 
-#[derive(Clone, Copy, Debug)]
-pub struct KV_PER_CM;
-impl Unit for KV_PER_CM {
-    const NAME: &'static str = "kV/cm";
+make_unit!(KV_PER_CM, "kV/cm", 1e5);
+make_unit!(MILLION_CM_PER_SECOND, "$10^6$ cm/s", 1e4);
+make_unit!(CM_SQUARED_PER_VOLT_SECOND, "cm$^2$ / V s", 1e-4);
 
-    const IN_SI: f64 = 1e5;
-}
-
-// why is this used so much in litterature?
-#[derive(Clone, Copy, Debug)]
-pub struct MILLION_CM_PER_SECOND;
-impl Unit for MILLION_CM_PER_SECOND {
-    const NAME: &'static str = "$10^6$ cm/s";
-
-    const IN_SI: f64 = 1e4;
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct CM_SQUARED_PER_VOLT_SECOND;
-impl Unit for CM_SQUARED_PER_VOLT_SECOND {
-    const NAME: &'static str = "cm^2 / V s";
-
-    const IN_SI: f64 = 1e-4;
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct PS;
-impl Unit for PS {
-    const NAME: &'static str = "ps";
-
-    const IN_SI: f64 = 1e-12;
-}
+make_unit!(PER_CM_CUBED, "cm$^{-3}$", 1e-6);
