@@ -39,4 +39,4 @@ make_unit!(KV_PER_CM, "kV/cm", 1e5);
 make_unit!(MILLION_CM_PER_SECOND, "$10^6$ cm/s", 1e4);
 make_unit!(CM_SQUARED_PER_VOLT_SECOND, "cm$^2$ / V s", 1e-4);
 
-make_unit!(PER_CM_CUBED, "cm$^{-3}$", 1e-6);
+make_unit!(PER_CM_CUBED, "cm$^{-3}$", 1e6);
