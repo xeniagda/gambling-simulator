@@ -1,7 +1,7 @@
 #![allow(non_snake_case, mixed_script_confusables)] // for band names such as Γ and L etc
 
-use gambling_simulator::{consts::PLANCK_BAR_SI, semiconductor::{Electron, Semiconductor, StepInfo}};
-use gambling_simulator::units::{Unit, EV, MEV};
+use gambling_simulator::{semiconductor::{Electron, Semiconductor, StepInfo}};
+use gambling_simulator::units::{Unit, EV, MEV, KV_PER_CM};
 
 use plotly::{common::{Marker, MarkerSymbol, Mode}, layout::Axis, Layout, Plot, Scatter};
 use rand::SeedableRng;
@@ -16,10 +16,10 @@ fn main() {
     let Γ_valley_idx = sample_sc.valleys.iter().position(|x| x.name == "Γ").expect("No Γ valley in GaAs");
 
     let energy_max = EV::to_si(2.);
-    let e_x = 0.0; // kV/cm
+    let e_x = KV_PER_CM::to_si(10.0);
 
     let step_info = StepInfo {
-        applied_field: [e_x * 1e5, 0., 0.],
+        applied_field: [e_x, 0., 0.],
         maximum_assumed_energy: energy_max,
     };
 
@@ -40,10 +40,12 @@ fn main() {
 
     for step in 0..2000 {
         let el_before = electron.clone();
-        let res = electron.free_flight(&step_info, &mut rng);
-        time += res.free_flight_time;
 
-        total_velocity_x += electron.velocity()[0] * res.free_flight_time;
+        let dt = electron.free_flight_time(&mut rng, &step_info);
+        let flight_info = electron.free_flight(dt, &step_info);
+        time += dt;
+
+        total_velocity_x += electron.velocity()[0] * dt;
 
         println!(
             "(t={:.4} ps) (#{step: <3}) Moved to r = ({:.4}, {:.4}, {:.4}) a, v = ({:.4}, {:.4}, {:.4}) a/ps, k = ({:.4}, {:.4}, {:.4}) a⁻¹, E = {:.4} meV (valley {})",
@@ -57,11 +59,7 @@ fn main() {
         // draw continuous trace
         // let dts = linspace_incl(0., res.free_flight_time, 5);
         let v = el_before.velocity();
-        let a = [
-            PLANCK_BAR_SI / electron.valley().effective_mass() * res.k_acceleration[0],
-            PLANCK_BAR_SI / electron.valley().effective_mass() * res.k_acceleration[1],
-            PLANCK_BAR_SI / electron.valley().effective_mass() * res.k_acceleration[2],
-        ];
+        let a = flight_info.x_acceleration;
 
         let color = VALLEY_COLORS[electron.valley_idx];
         // let intermediate_positions = dts
@@ -80,7 +78,7 @@ fn main() {
         //     .name(format!("#{step} flight (in {}, E = {:.3} meV at start, t = {:.4} ps)", electron.valley().name, electron.energy_eV() * 1e3, res.free_flight_time*1e12));
         // plot_traces.add_trace(trace);
         while next_point_t < time {
-            let dt = next_point_t - (time - res.free_flight_time);
+            let dt = next_point_t - (time - dt);
             let xyz = [
                 el_before.pos[0] + v[0] * dt + a[0] * dt.powi(2) / 2.,
                 el_before.pos[1] + v[1] * dt + a[1] * dt.powi(2) / 2.,

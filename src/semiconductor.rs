@@ -525,28 +525,31 @@ pub struct StepInfo {
 impl StepInfo {
 }
 
+// TODO: Not needed I think ever
+// Useful for plotting free flights
+// equal to dk/dt over flight
 pub struct FlightResult {
-    /// For how long were we in free flight?
-    pub free_flight_time: f64,
+    pub x_acceleration: [f64; 3],
 
-    // TODO: Not needed I think ever
-    // Useful for plotting free flights
-    // equal to dk/dt over flight
     pub k_acceleration: [f64; 3],
 }
 
 impl<'sc> Electron<'sc> {
-    /// Does one step in the monte carlo process
-    pub fn free_flight<R: Rng>(&mut self, info: &StepInfo, rng: &mut R) -> FlightResult {
+    pub fn free_flight_time<R: Rng>(&mut self, rng: &mut R, info: &StepInfo) -> f64 {
         // TODO: This should be cached. Not sure exactly where though
         // Scattering should probably be the semiconductor's responsibility
         let mechs = Electron::all_mechanisms::<R>();
 
         // Free flight
         let Γ = mechs.iter().map(|m| (m.maximum_rate)(&self, info.maximum_assumed_energy)).sum::<f64>();
-        // TODO: f64::EPSILON is not the smallest number that we can ln without getting zero. find it
+        // TODO: What's the smallest number we can take the ln of without getting -infinity?
         let t = -1./Γ * rng.random_range(0f64 ..= 1f64).ln();
 
+        t
+    }
+
+    /// Does one step in the monte carlo process
+    pub fn free_flight(&mut self, dt: f64, info: &StepInfo) -> FlightResult {
         let force = [
             -ELECTRON_CHARGE * info.applied_field[0],
             -ELECTRON_CHARGE * info.applied_field[1],
@@ -560,9 +563,9 @@ impl<'sc> Electron<'sc> {
         ];
 
         self.k = [
-            self.k[0] + t * k_acceleration[0],
-            self.k[1] + t * k_acceleration[1],
-            self.k[2] + t * k_acceleration[2],
+            self.k[0] + dt * k_acceleration[0],
+            self.k[1] + dt * k_acceleration[1],
+            self.k[2] + dt * k_acceleration[2],
         ];
 
         // TODO: Calculate group velocity and group acceleration
@@ -574,14 +577,14 @@ impl<'sc> Electron<'sc> {
         ];
 
         self.pos = [
-            self.pos[0] + v[0] * t + a[0] * t.powi(2) / 2.,
-            self.pos[1] + v[1] * t + a[1] * t.powi(2) / 2.,
-            self.pos[2] + v[2] * t + a[2] * t.powi(2) / 2.,
+            self.pos[0] + v[0] * dt + a[0] * dt.powi(2) / 2.,
+            self.pos[1] + v[1] * dt + a[1] * dt.powi(2) / 2.,
+            self.pos[2] + v[2] * dt + a[2] * dt.powi(2) / 2.,
         ];
 
         FlightResult {
-            free_flight_time: t,
             k_acceleration,
+            x_acceleration: a,
         }
     }
 

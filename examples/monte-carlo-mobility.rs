@@ -43,9 +43,11 @@ fn generate_histogram(
 
             while t < t_stop {
                 // Step electron
-                let flight = electron.free_flight(&step_info, &mut rng);
-                let dt = flight.free_flight_time;
+                let dt = electron.free_flight_time(&mut rng, &step_info);
+                electron.free_flight(dt, &step_info);
                 t += dt;
+
+                // Scatter electron
                 let scatter_mech = electron.scatter(&step_info, &mut rng);
 
                 if t > t_start {

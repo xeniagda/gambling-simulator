@@ -29,6 +29,7 @@ macro_rules! make_unit {
 }
 
 make_unit!(PS, "ps", 1e-12);
+make_unit!(NM, "nm", 1e-9);
 
 const EV_TO_J: f64 = 1.602176e-19;
 make_unit!(EV, "eV", EV_TO_J);

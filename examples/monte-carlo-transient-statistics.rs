@@ -43,9 +43,9 @@ fn generate_histogram(
         let mut t = 0.0;
         while t < t_stop {
             // Free flight
-            let ff = electron.free_flight(&step_info, &mut rng);
-            let flight_time = ff.free_flight_time;
-            t += flight_time;
+            let dt = electron.free_flight_time(&mut rng, &step_info);
+            electron.free_flight(dt, &step_info);
+            t += dt;
 
             if let Some(mech) = electron.scatter(&step_info, &mut rng) {
                 histograms.mechanisms.add((t, mech.name_short), 1.);
@@ -53,8 +53,8 @@ fn generate_histogram(
 
             // Record in histogram
             let vx = electron.velocity()[0];
-            histograms.velocity.add((t, vx), flight_time);
-            histograms.valleys.add((t, electron.valley().name), ff.free_flight_time);
+            histograms.velocity.add((t, vx), dt);
+            histograms.valleys.add((t, electron.valley().name), dt);
         }
     }
     histograms

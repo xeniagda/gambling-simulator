@@ -38,12 +38,12 @@ fn generate_histogram(
 
         let mut t = 0.;
         while t < t_stop {
-            // Set histogram
-            let valley = electron.valley().name;
-            let flight = electron.free_flight(&step_info, &mut rng);
-            let dt = flight.free_flight_time;
+            let dt = electron.free_flight_time(&mut rng, &step_info);
+            electron.free_flight(dt, &step_info);
             t += dt;
 
+            // Set histogram
+            let valley = electron.valley().name;
             histograms.energy_histogram.add((valley, electron.energy()), dt);
             histograms.velocity_histogram.add(electron.velocity()[0], dt);
 
