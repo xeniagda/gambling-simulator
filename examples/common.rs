@@ -125,6 +125,73 @@ impl ColorGradient {
     }
 }
 
+pub mod plot_histogram {
+    use plotly::{Layout, Plot};
+
+    #[allow(unused)]
+    pub fn set_default_layout(plot: &mut Plot, title: &str) {
+        plot.set_layout(
+            Layout::new()
+                .width(1200).height(800)
+                .title(title)
+        )
+    }
+
+    pub mod quantity {
+        use plotly::layout::Axis;
+        use plotly::{Plot, Scatter};
+        use gambling_simulator::histogram::{HistogramRef, UnitBinner};
+        use gambling_simulator::units::Unit;
+
+        #[allow(unused)]
+        pub fn set_layout<X: Unit, Y: Unit>(
+            plot: &mut Plot,
+            histo: HistogramRef<UnitBinner<X>>,
+            y_quantity_name: &str,
+        ) {
+            let layout = plot.layout().clone();
+            plot.set_layout(
+                layout
+                    .x_axis(Axis::new().title(format!(r"${}\ [\text{{{}}}]$", histo.binner.quantity_name, X::NAME)))
+                    .y_axis(Axis::new().title(format!(r"${}\ [\text{{{}}}]$", y_quantity_name, Y::NAME)))
+            );
+        }
+
+        #[allow(unused)]
+        pub fn set_layout_log<X: Unit, Y: Unit>(
+            plot: &mut Plot,
+            histo: HistogramRef<UnitBinner<X>>,
+            y_quantity_name: &str,
+        ) {
+            let layout = plot.layout().clone();
+            plot.set_layout(
+                layout
+                    .x_axis(Axis::new().title(format!(r"${}\ [\text{{{}}}]$", histo.binner.quantity_name, X::NAME)))
+                    .y_axis(Axis::new().title(format!(r"${}\ [\text{{{}, log10}}]$", y_quantity_name, Y::NAME)))
+            );
+        }
+
+        #[allow(unused)]
+        pub fn plot<X: Unit, Y: Unit>(
+            histo: HistogramRef<UnitBinner<X>>,
+        ) -> Box<Scatter<f64, f64>> {
+            Scatter::new(
+                histo.all_values().map(|(x, _y)| X::from_si(x)).collect(),
+                histo.all_values().map(|(_x, y)| Y::from_si(y)).collect(),
+            )
+        }
+
+        #[allow(unused)]
+        pub fn plot_log<X: Unit, Y: Unit>(
+            histo: HistogramRef<UnitBinner<X>>,
+        ) -> Box<Scatter<f64, f64>> {
+            Scatter::new(
+                histo.all_values().map(|(x, _y)| X::from_si(x)).collect(),
+                histo.all_values().map(|(_x, y)| Y::from_si(y).log10()).collect(),
+            )
+        }
+    }
+}
 
 #[allow(dead_code)] // main is required for LSP not to error since common is technically an example, however when using it as a module main is considered dead
 fn main() {}
