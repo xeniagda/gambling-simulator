@@ -443,18 +443,16 @@ impl<'h, B: Binner> HistogramRef<'h, B> {
 
     /// Total time for this slice
     pub fn subtotal(&self) -> f64 {
-        (0..self.binner.count())
-            .map(|idx| self.storage[self.stride * idx])
+        self.all_values()
+            .map(|(_, amount)| amount)
             .sum()
-
     }
 }
 
 impl<'h, U: Unit + Debug> HistogramRef<'h, UnitBinner<U>> {
     pub fn mean(&self) -> f64 {
-        let integral = self.storage.iter().enumerate()
-            .map(|(idx, amount)| {
-                let value = self.binner.unbin(idx).expect("Failed to unbin value in range");
+        let integral = self.all_values()
+            .map(|(value, amount)| {
                 value * amount
             })
             .sum::<f64>();
@@ -465,9 +463,8 @@ impl<'h, U: Unit + Debug> HistogramRef<'h, UnitBinner<U>> {
     pub fn stddev(&self) -> f64 {
         let mean = self.mean();
 
-        let integral = self.storage.iter().enumerate()
-            .map(|(idx, amount)| {
-                let value = self.binner.unbin(idx).expect("Failed to unbin value in range");
+        let integral = self.all_values()
+            .map(|(value, amount)| {
                 (value-mean).powi(2) * amount
             })
             .sum::<f64>();
