@@ -1,6 +1,6 @@
 #![allow(non_snake_case, mixed_script_confusables)] // for band names such as Γ and L etc
 
-use gambling_simulator::{semiconductor::{Electron, Semiconductor, StepInfo}, units, units::Unit};
+use gambling_simulator::{semiconductor::{Electron, Semiconductor, StepInfo}, units::{self, Unit}};
 use gambling_simulator::histogram::{generate_histogram_collection_struct, Histogram, Binner, Binner2D, UnitBinner, DiscreteBinner};
 
 use plotly::{common::{DashType, Line, Mode}, layout::Axis, Layout, Plot, Scatter};
@@ -14,6 +14,7 @@ use crate::common::write_plots;
 generate_histogram_collection_struct! {
     struct Histograms {
         velocity: Histogram<Binner2D<UnitBinner<units::KV_PER_CM>, UnitBinner<units::MILLION_CM_PER_SECOND>>>,
+        position: Histogram<Binner2D<UnitBinner<units::KV_PER_CM>, Binner2D<UnitBinner<units::PS>, UnitBinner<units::NM>>>>,
         energy: Histogram<Binner2D<UnitBinner<units::KV_PER_CM>, UnitBinner<units::MEV>>>,
         mechanism: Histogram<Binner2D<UnitBinner<units::KV_PER_CM>, DiscreteBinner<&'static str>>>,
         valley: Histogram<Binner2D<UnitBinner<units::KV_PER_CM>, DiscreteBinner<&'static str>>>,
@@ -28,7 +29,7 @@ fn generate_histogram(
     mut step_info: StepInfo, // applied_field overwritten
 
     n_electrons: usize,
-    (t_start, t_stop): (f64, f64),
+    binner_time: UnitBinner<units::PS>,
 ) -> Histograms {
     let mut rng = ChaCha8Rng::from_os_rng();
 
@@ -37,11 +38,11 @@ fn generate_histogram(
         step_info.applied_field = [efield, 0., 0.,];
 
         for _run in 0..n_electrons {
-        let mut electron = Electron::thermalized_in_field(&mut rng, &sc, [0., 0., 0.], step_info.applied_field);
+            let mut electron = Electron::thermalized_in_field(&mut rng, &sc, [0., 0., 0.], step_info.applied_field);
 
             let mut t = 0.;
 
-            while t < t_stop {
+            while t < binner_time.end_si {
                 // Step electron
                 let dt = electron.free_flight_time(&mut rng, &step_info);
                 electron.free_flight(dt, &step_info);
@@ -50,11 +51,13 @@ fn generate_histogram(
                 // Scatter electron
                 let scatter_mech = electron.scatter(&step_info, &mut rng);
 
-                if t > t_start {
+                if t > binner_time.start_si {
                     // Set histogram
                     let vx_now = electron.velocity()[0];
                     histo.velocity.add((efield, vx_now), dt);
                     histo.energy.add((efield, electron.energy()), dt);
+
+                    histo.position.add((efield, (t, electron.pos[0])), dt);
 
                     histo.valley.add((efield, electron.valley().name), dt);
                     if let Some(mech) = scatter_mech {
@@ -77,9 +80,18 @@ fn main() {
         maximum_assumed_energy: energy_max,
     };
 
+    let binner_time = UnitBinner::<units::PS>::new(
+        "t",
+        50., 100., 10,
+    );
+
+    let binner_position = UnitBinner::<units::NM>::new(
+        "x", -500e3, 500e3, 5000,
+    );
+
     let binner_field = UnitBinner::<units::KV_PER_CM>::new(
         "E_x",
-        0., 30., 60,
+        0., 4., 40,
     );
     let binner_velocity = UnitBinner::<units::MILLION_CM_PER_SECOND>::new(
         "v_x",
@@ -95,6 +107,17 @@ fn main() {
         Binner2D {
             major: binner_field.clone(),
             minor: binner_velocity.clone(),
+        },
+    );
+
+    let position_over_time_histo = Histogram::new(
+        "position".to_string(),
+        Binner2D {
+            major: binner_field.clone(),
+            minor: Binner2D {
+                major: binner_time.clone(),
+                minor: binner_position.clone(),
+            },
         },
     );
 
@@ -130,23 +153,22 @@ fn main() {
         }
     );
 
-    let n_electrons = 50;
-    let t_start = 10e-12; // when to start recording statistics
-    let t_stop = 18e-12; // how long to simulate the carrier
-    let n_threads = 64; //num_cpus::get();
+    let n_electrons = 100;
+    let n_threads = num_cpus::get();
 
     let histo: Histograms = std::thread::scope(|scope| {
         let mut histo = Histograms {
             velocity: velocity_histo,
+            position: position_over_time_histo,
             energy: energy_histo,
             mechanism: mechanism_histo,
             valley: valley_histo,
         };
 
         let mut handles = (0..n_threads).map(|thread_idx| {
-            let (sample_sc, worker) = (sample_sc.clone(), histo.get_worker());
+            let (sample_sc, binner_time, worker) = (sample_sc.clone(), binner_time.clone(), histo.get_worker());
             let handle = scope.spawn(move || {
-                generate_histogram(thread_idx, sample_sc, worker, step_info, n_electrons, (t_start, t_stop))
+                generate_histogram(thread_idx, sample_sc, worker, step_info, n_electrons, binner_time)
             });
             (handle, thread_idx)
         }).collect::<Vec<_>>();
@@ -328,6 +350,41 @@ fn main() {
         plot_mobility
     };
 
+    let plot_diffusion = {
+        let mut plot_diffusion = Plot::new();
+
+        let diffusion_points = binner_field.steps().map(|field| {
+            let histo = histo.position.as_ref_at_major(field).unwrap();
+            let diffusions = binner_time.steps().map(|t| {
+                let histo = histo.at_major(t).unwrap();
+                let var = histo.stddev().powi(2);
+                units::CM_SQUARED_PER_SECOND::from_si(0.5 * var / t)
+            });
+            diffusions.sum::<f64>() / binner_time.count as f64
+        }).collect::<Vec<_>>();
+
+        let trace = Scatter::new(
+                binner_field.steps().map(|x| units::KV_PER_CM::from_si(x)).collect(),
+                diffusion_points,
+            )
+            .mode(Mode::Lines);
+
+        plot_diffusion.add_trace(trace);
+
+        plot_diffusion.set_layout(
+            Layout::new()
+                .width(1200).height(800)
+                .title("Diffusion")
+                .x_axis(
+                    Axis::new().title("$E_x [kV/cm]$")
+                )
+                .y_axis(
+                    Axis::new().title(format!(r"$D \text{{[{}]}}$", units::CM_SQUARED_PER_SECOND::NAME))
+                )
+        );
+        plot_diffusion
+    };
+
     let plot_mechanisms = {
         let mut plot_mechanisms = Plot::new();
 
@@ -397,5 +454,5 @@ fn main() {
     };
 
     let name = format!("mobility-ni-1e{}", (sample_sc.impurity_density/1e6).log10().round());
-    write_plots("monte-carlo", name, [plot_histo_v, plot_energy, plot_velocity, plot_mobility, plot_mechanisms, plot_valley]);
+    write_plots("monte-carlo", name, [plot_histo_v, plot_energy, plot_velocity, plot_mobility, plot_diffusion, plot_mechanisms, plot_valley]);
 }
