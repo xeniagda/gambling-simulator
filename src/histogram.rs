@@ -98,6 +98,26 @@ impl<U: Unit> UnitBinner<U> {
     pub fn from_si(&self, val: f64) -> f64 {
         U::from_si(val)
     }
+
+    pub fn off_grid_shrink(&self) -> UnitBinner<U> {
+        UnitBinner {
+            _marker: PhantomData,
+            quantity_name: self.quantity_name,
+            start_si: self.start_si + self.bin_size() / 2.,
+            end_si: self.end_si - self.bin_size() / 2.,
+            count: self.count - 1,
+        }
+    }
+
+    pub fn off_grid_grow(&self) -> UnitBinner<U> {
+        UnitBinner {
+            _marker: PhantomData,
+            quantity_name: self.quantity_name,
+            start_si: self.start_si - self.bin_size() / 2.,
+            end_si: self.end_si + self.bin_size() / 2.,
+            count: self.count + 1,
+        }
+    }
 }
 
 impl<U: Unit + Debug + Clone> UnitBinner<U> {
@@ -279,6 +299,25 @@ impl<B: Binner> Histogram<B> {
 
     pub fn add(&mut self, at: B::T, amount: f64) {
         self.as_ref_mut().add(at, amount);
+    }
+}
+
+impl<U: Unit> Histogram<UnitBinner<U>> {
+    // Returns a histogram with binner of `self.binner.off_grid_shrink()`
+    pub fn derivative(&self) -> Histogram<UnitBinner<U>> {
+        let binner = self.binner.off_grid_shrink();
+        let mut storage = Vec::with_capacity(self.storage.len()-1);
+        for i in 0..self.storage.len()-1 {
+            let (before, next) = (self.storage[i], self.storage[i+1]);
+            let diff = (next - before) / self.binner.bin_size();
+            storage.push(diff);
+        }
+        let name = format!("Derivative of {}", self.name);
+        Histogram {
+            name: Arc::from(name),
+            binner,
+            storage,
+        }
     }
 }
 
