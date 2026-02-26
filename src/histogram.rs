@@ -253,6 +253,10 @@ impl<B: Binner> Histogram<B> {
         }
     }
 
+    pub fn reset(&mut self) {
+        self.storage.fill(0.,);
+    }
+
     pub fn get_worker(&self) -> Self {
         let count = self.storage.len();
         Histogram {
@@ -355,6 +359,52 @@ impl<Major: Binner, Minor: Binner> Histogram<Binner2D<Major, Minor>> {
     }
 
     pub fn as_ref_mut_at_minor<'h>(&'h mut self, minor_value: Minor::T) -> Result<HistogramRefMut<'h, Major>> {
+        let minor_idx = self.binner.minor.bin(minor_value)?;
+        let minor_count = self.binner.minor.count();
+
+        Ok(HistogramRefMut {
+            binner: &self.binner.major,
+            storage: &mut self.storage[minor_idx..],
+            stride: minor_count,
+        })
+    }
+}
+
+impl<'h, Major: Binner, Minor: Binner> HistogramRef<'h, Binner2D<Major, Minor>> {
+    pub fn at_major(&'h self, major_value: Major::T) -> Result<HistogramRef<'h, Minor>> {
+        let major_idx = self.binner.major.bin(major_value)?;
+        let minor_count = self.binner.minor.count();
+        Ok(HistogramRef {
+            binner: &self.binner.minor,
+            storage: &self.storage[major_idx * minor_count..(major_idx+1) * minor_count],
+            stride: 1,
+        })
+    }
+
+    pub fn at_minor(&'h self, minor_value: Minor::T) -> Result<HistogramRef<'h, Major>> {
+        let minor_idx = self.binner.minor.bin(minor_value)?;
+        let minor_count = self.binner.minor.count();
+
+        Ok(HistogramRef {
+            binner: &self.binner.major,
+            storage: &self.storage[minor_idx..],
+            stride: minor_count,
+        })
+    }
+}
+
+impl<'h, Major: Binner, Minor: Binner> HistogramRefMut<'h, Binner2D<Major, Minor>> {
+    pub fn at_major(&'h mut self, major_value: Major::T) -> Result<HistogramRefMut<'h, Minor>> {
+        let major_idx = self.binner.major.bin(major_value)?;
+        let minor_count = self.binner.minor.count();
+        Ok(HistogramRefMut {
+            binner: &self.binner.minor,
+            storage: &mut self.storage[major_idx * minor_count..(major_idx+1) * minor_count],
+            stride: 1,
+        })
+    }
+
+    pub fn at_minor(&'h mut self, minor_value: Minor::T) -> Result<HistogramRefMut<'h, Major>> {
         let minor_idx = self.binner.minor.bin(minor_value)?;
         let minor_count = self.binner.minor.count();
 
