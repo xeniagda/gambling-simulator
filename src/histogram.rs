@@ -218,8 +218,6 @@ pub struct Histogram<B: Binner> {
 
     // Invariant: `storage.len() == binner.count()`
     storage: Vec<f64>,
-    // All values `add`ed to the histogram
-    pub total: f64,
 
     // TODO: record out-of-bounds writes
     // TODO: Represent adds and gets with ranges
@@ -232,7 +230,6 @@ impl<B: Binner> Histogram<B> {
             name: name.into(),
             binner,
             storage: std::iter::repeat(0.).take(count).collect(),
-            total: 0.,
         }
     }
 
@@ -242,7 +239,6 @@ impl<B: Binner> Histogram<B> {
             name: self.name.clone(),
             binner: self.binner.clone(),
             storage: std::iter::repeat(0.).take(count).collect(),
-            total: 0.,
         }
     }
 
@@ -253,7 +249,6 @@ impl<B: Binner> Histogram<B> {
         for (x, y) in self.storage.iter_mut().zip(worker.storage) {
             *x += y;
         }
-        self.total += worker.total;
     }
 
     pub fn as_ref<'h>(&'h self) -> HistogramRef<'h, B> {
@@ -261,7 +256,6 @@ impl<B: Binner> Histogram<B> {
             binner: &self.binner,
             storage: &self.storage,
             stride: 1,
-            total: &self.total,
         }
     }
 
@@ -270,7 +264,6 @@ impl<B: Binner> Histogram<B> {
             binner: &self.binner,
             storage: &mut self.storage,
             stride: 1,
-            total: &mut self.total,
         }
     }
 
@@ -298,8 +291,6 @@ impl<Major: Binner, Minor: Binner> Histogram<Binner2D<Major, Minor>> {
             binner: &self.binner.minor,
             storage: &self.storage[major_idx * minor_count..(major_idx+1) * minor_count],
             stride: 1,
-            // TODO: this is wrong... how do we do this...
-            total: &self.total,
         })
     }
 
@@ -311,8 +302,6 @@ impl<Major: Binner, Minor: Binner> Histogram<Binner2D<Major, Minor>> {
             binner: &self.binner.major,
             storage: &self.storage[minor_idx..],
             stride: minor_count,
-            // TODO: This is wrong too...
-            total: &self.total,
         })
     }
 
@@ -323,7 +312,6 @@ impl<Major: Binner, Minor: Binner> Histogram<Binner2D<Major, Minor>> {
             binner: &self.binner.minor,
             storage: &mut self.storage[major_idx * minor_count..(major_idx+1) * minor_count],
             stride: 1,
-            total: &mut self.total,
         })
     }
 
@@ -335,7 +323,6 @@ impl<Major: Binner, Minor: Binner> Histogram<Binner2D<Major, Minor>> {
             binner: &self.binner.major,
             storage: &mut self.storage[minor_idx..],
             stride: minor_count,
-            total: &mut self.total,
         })
     }
 }
@@ -346,7 +333,6 @@ impl<Major: Binner, Minor: Binner> Histogram<Binner2D<Major, Minor>> {
 pub struct HistogramRef<'h, B: Binner> {
     pub binner: &'h B,
     storage: &'h [f64],
-    pub total: &'h f64,
     stride: usize,
 }
 
@@ -405,12 +391,10 @@ pub struct HistogramRefMut<'h, B: Binner> {
     pub binner: &'h B,
     storage: &'h mut [f64],
     stride: usize,
-    pub total: &'h mut f64,
 }
 
 impl<'h, B: Binner> HistogramRefMut<'h, B> {
     pub fn add(&mut self, at: B::T, amount: f64) {
-        *self.total += amount;
         let Ok(idx) = self.binner.bin(at) else {
             // TODO: Record OOB?
             return;
@@ -423,7 +407,6 @@ impl<'h, B: Binner> HistogramRefMut<'h, B> {
             binner: &self.binner,
             storage: &self.storage,
             stride: self.stride,
-            total: &*self.total,
         }
     }
 

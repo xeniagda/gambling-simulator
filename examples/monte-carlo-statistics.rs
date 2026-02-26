@@ -161,7 +161,7 @@ fn main() {
         let mut plot_histo_e = Plot::new();
         for (idx, valley) in histograms.energy_histogram.binner.major.steps().enumerate() {
             let histo_e = histograms.energy_histogram.as_ref_at_major(valley).unwrap();
-            let total = histograms.energy_histogram.total;
+            let total = histograms.energy_histogram.as_ref().subtotal();
             let trace = Scatter::new(
                 histo_e.all_values().map(|(val, _time)| histo_e.binner.from_si(val)).collect(),
                 histo_e.all_values().map(|(_val, time)| (time / total / histo_e.binner.bin_size_unit()).log10()).collect(),
@@ -187,7 +187,7 @@ fn main() {
     let plot_histo_v = {
         let mut plot_histo_v = Plot::new();
         let histo_v = histograms.velocity_histogram;
-        let total = histo_v.total;
+        let total = histo_v.as_ref().subtotal();
         let trace = Scatter::new(
             histo_v.all_values().into_iter().map(|(val, _time)| histo_v.binner.from_si(val)).collect(),
             histo_v.all_values().into_iter().map(|(_val, time)| time / total / histo_v.binner.bin_size_unit()).collect(),
@@ -213,7 +213,7 @@ fn main() {
 
         for (idx, valley) in valley_binner.steps().enumerate() {
             let histo_mechs = histograms.mechanism_histogram.as_ref_at_major(valley).unwrap();
-            let total = histograms.mechanism_histogram.total;
+            let total = histograms.mechanism_histogram.as_ref().subtotal();
 
             let trace = Scatter::new(
                     histo_mechs.all_values().enumerate().map(|(idx, _)| idx).collect(),

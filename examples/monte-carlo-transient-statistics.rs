@@ -155,7 +155,7 @@ fn main() {
 
             let trace = Scatter::new(
                     histo_v.all_values().map(|(v, _total)| units::MILLION_CM_PER_SECOND::from_si(v)).collect(),
-                    histo_v.all_values().map(|(_v, total)| total / histograms.velocity.total).collect(),
+                    histo_v.all_values().map(|(_v, total)| total / histograms.velocity.as_ref().subtotal()).collect(),
                 )
                 .mode(Mode::Lines)
                 .line(Line::new().color(color))
