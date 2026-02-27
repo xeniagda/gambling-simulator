@@ -556,19 +556,6 @@ impl<'sc> Electron<'sc> {
             -ELECTRON_CHARGE * info.applied_field[2],
         ];
 
-        let k_acceleration = [
-            force[0] / PLANCK_BAR_SI,
-            force[1] / PLANCK_BAR_SI,
-            force[2] / PLANCK_BAR_SI,
-        ];
-
-        self.k = [
-            self.k[0] + dt * k_acceleration[0],
-            self.k[1] + dt * k_acceleration[1],
-            self.k[2] + dt * k_acceleration[2],
-        ];
-
-        // TODO: Calculate group velocity and group acceleration
         let v = self.velocity();
         let a = [
             force[0] / self.valley().effective_mass(),
@@ -581,6 +568,19 @@ impl<'sc> Electron<'sc> {
             self.pos[1] + v[1] * dt + a[1] * dt.powi(2) / 2.,
             self.pos[2] + v[2] * dt + a[2] * dt.powi(2) / 2.,
         ];
+
+        let k_acceleration = [
+            force[0] / PLANCK_BAR_SI,
+            force[1] / PLANCK_BAR_SI,
+            force[2] / PLANCK_BAR_SI,
+        ];
+
+        self.k = [
+            self.k[0] + dt * k_acceleration[0],
+            self.k[1] + dt * k_acceleration[1],
+            self.k[2] + dt * k_acceleration[2],
+        ];
+
 
         FlightResult {
             k_acceleration,
