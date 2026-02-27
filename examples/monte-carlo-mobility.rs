@@ -82,7 +82,7 @@ fn main() {
 
     let binner_time = UnitBinner::<units::PS>::new(
         "t",
-        50., 100., 10,
+        10., 20., 10,
     );
 
     let binner_position = UnitBinner::<units::NM>::new(
@@ -91,7 +91,7 @@ fn main() {
 
     let binner_field = UnitBinner::<units::KV_PER_CM>::new(
         "E_x",
-        0., 4., 40,
+        0., 20., 40,
     );
     let binner_velocity = UnitBinner::<units::MILLION_CM_PER_SECOND>::new(
         "v_x",
@@ -153,7 +153,7 @@ fn main() {
         }
     );
 
-    let n_electrons = 100;
+    let n_electrons = 30;
     let n_threads = num_cpus::get();
 
     let histo: Histograms = std::thread::scope(|scope| {
