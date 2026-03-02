@@ -1,5 +1,7 @@
 #![allow(non_snake_case, mixed_script_confusables)] // for band names such as Γ and L etc
 
+use std::sync::Arc;
+
 use gambling_simulator::{semiconductor::{Electron, Semiconductor, StepInfo}, units, units::Unit};
 use gambling_simulator::histogram::{generate_histogram_collection_struct, Histogram, Binner, DiscreteBinner, UnitBinner, Binner2D};
 
@@ -25,7 +27,7 @@ fn generate_histogram(
     thread_idx: usize,
     mut histograms: Histograms,
 
-    sc: Semiconductor,
+    sc: Arc<Semiconductor>,
     step_info: StepInfo,
 
     n_electrons: usize,
@@ -34,7 +36,7 @@ fn generate_histogram(
     let mut rng = ChaCha8Rng::from_os_rng();
 
     for _run in tqdm(0..n_electrons).desc(Some(format!("Thread #{thread_idx: <4}"))) {
-        let mut electron = Electron::thermalized_in_field(&mut rng, &sc, [0., 0., 0.], step_info.applied_field);
+        let mut electron = Electron::thermalized_in_field(&mut rng, sc.clone(), [0., 0., 0.], step_info.applied_field);
 
         let mut t = 0.;
         while t < t_stop {
@@ -59,7 +61,7 @@ fn generate_histogram(
 }
 
 fn main() {
-    let sample_sc = Semiconductor::GaAs(300.0);
+    let sample_sc = Arc::new(Semiconductor::GaAs(300.0));
 
     let e_x = 10.; // kV/cm
 

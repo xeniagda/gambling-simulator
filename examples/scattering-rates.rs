@@ -1,5 +1,6 @@
 #![allow(non_snake_case, mixed_script_confusables)]
 
+use std::sync::Arc;
 use gambling_simulator::units::{Unit, EV, MEV};
 use gambling_simulator::semiconductor::{Electron, PhononType, Semiconductor};
 
@@ -11,7 +12,7 @@ use plotly::layout::Axis;
 use plotly::{Layout, Plot, Scatter};
 
 fn main() {
-    let sample_sc = Semiconductor::GaAs(300.0);
+    let sample_sc = Arc::new(Semiconductor::GaAs(300.0));
     let Γ_valley_idx = sample_sc.valleys.iter().position(|x| x.name == "Γ").expect("No Γ valley in GaAs");
     let L_valley_idx = sample_sc.valleys.iter().position(|x| x.name == "L").expect("No L valley in GaAs");
     let X_valley_idx = sample_sc.valleys.iter().position(|x| x.name == "X").expect("No X valley in GaAs");
@@ -29,7 +30,7 @@ fn main() {
         let valley = &sample_sc.valleys[valley_idx];
         eprintln!("For {}:", valley.name);
         let electrons = kxs.iter().map(|&kx| Electron {
-            sc: &sample_sc,
+            sc: sample_sc.clone(),
             valley_idx,
             k: [kx, 0., 0.],
             pos: [0., 0., 0.],

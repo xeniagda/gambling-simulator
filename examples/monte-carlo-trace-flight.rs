@@ -1,5 +1,7 @@
 #![allow(non_snake_case, mixed_script_confusables)] // for band names such as Γ and L etc
 
+use std::sync::Arc;
+
 use gambling_simulator::{semiconductor::{Electron, Semiconductor, StepInfo}};
 use gambling_simulator::units::{Unit, EV, MEV, KV_PER_CM};
 
@@ -12,7 +14,7 @@ use common::{write_plots, VALLEY_COLORS};
 fn main() {
     let mut rng = ChaCha8Rng::from_os_rng();
 
-    let sample_sc = Semiconductor::GaAs(300.0);
+    let sample_sc = Arc::new(Semiconductor::GaAs(300.0));
     let Γ_valley_idx = sample_sc.valleys.iter().position(|x| x.name == "Γ").expect("No Γ valley in GaAs");
 
     let energy_max = EV::to_si(2.);
@@ -26,7 +28,7 @@ fn main() {
     let mut plot_traces = Plot::new();
 
     let mut electron = Electron {
-        sc: &sample_sc,
+        sc: sample_sc.clone(),
         valley_idx: Γ_valley_idx,
         k: [0., 0., 0.,],
         pos: [0., 0., 0.,],

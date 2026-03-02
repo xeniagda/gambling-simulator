@@ -1,5 +1,7 @@
 #![allow(non_snake_case, mixed_script_confusables)] // for band names such as Γ and L etc
 
+use std::sync::Arc;
+
 use gambling_simulator::semiconductor::{Electron, Semiconductor};
 use gambling_simulator::units::{Unit, EV};
 
@@ -11,7 +13,7 @@ mod common;
 use common::{linspace, write_plots};
 
 fn main() {
-    let sample_sc = Semiconductor::GaAs(300.0);
+    let sample_sc = Arc::new(Semiconductor::GaAs(300.0));
     // Plot E vs k
 
     let mut plot = Plot::new();
@@ -48,7 +50,7 @@ fn main() {
             let ks = ts.map(|t| [delta[0] * t, delta[1] * t, delta[2] * t]);
 
             let electrons = ks.map(|k| Electron {
-                sc: &sample_sc,
+                sc: sample_sc.clone(),
                 valley_idx: this_idx,
                 k,
                 pos: [0., 0., 0.],

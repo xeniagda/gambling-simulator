@@ -1,5 +1,6 @@
 use std::f64::consts::PI;
 use rand::Rng;
+use std::sync::Arc;
 
 use crate::units::{Unit, EV, MEV};
 
@@ -134,9 +135,9 @@ impl Semiconductor {
 }
 
 #[derive(Clone)]
-pub struct Electron<'sc> {
+pub struct Electron {
     /// Semiconductor we are in
-    pub sc: &'sc Semiconductor,
+    pub sc: Arc<Semiconductor>,
     /// self.sc[self.valley_idx]
     /// TODO: Should we need to track which equivalent valley we are in?
     pub valley_idx: usize,
@@ -146,9 +147,9 @@ pub struct Electron<'sc> {
     pub pos: [f64; 3],
 }
 
-impl<'sc> Electron<'sc> {
+impl Electron {
     /// Electron with average temperature of the lattice and a specified drift velocity
-    pub fn thermalized<R: Rng>(rng: &mut R, sc: &'sc Semiconductor, valley_idx: usize, pos: [f64; 3], drift: [f64; 3]) -> Self {
+    pub fn thermalized<R: Rng>(rng: &mut R, sc: Arc<Semiconductor>, valley_idx: usize, pos: [f64; 3], drift: [f64; 3]) -> Self {
         let valley = &sc.valleys[valley_idx];
         let stddev = (BOLTZMANN * sc.temperature / valley.effective_mass()).sqrt();
 
@@ -168,7 +169,7 @@ impl<'sc> Electron<'sc> {
     }
 
     /// Very rough model trying to capture the distribution of electrons in bulk semiconductor at a certain field strength
-    pub fn thermalized_in_field<R: Rng>(rng: &mut R, sc: &'sc Semiconductor, pos: [f64; 3], efield: [f64; 3]) -> Self {
+    pub fn thermalized_in_field<R: Rng>(rng: &mut R, sc: Arc<Semiconductor>, pos: [f64; 3], efield: [f64; 3]) -> Self {
         let efield_mag = efield.iter().map(|x| x.powi(2)).sum::<f64>().sqrt();
         if efield_mag < 100. {
             return Self::thermalized(rng, sc, 0, pos, [0., 0., 0.,]);
@@ -261,26 +262,26 @@ impl CoordSystem {
     }
 }
 
-pub struct ScatteringMechanism<'sc, R: Rng> {
+pub struct ScatteringMechanism<R: Rng> {
     pub name_full: &'static str,
     pub name_short: &'static str,
     /// Scattering rate for a specific electron at it's energy
     /// Given in s^-1
-    pub rate: fn(&Electron<'sc>) -> f64,
+    pub rate: fn(&Electron) -> f64,
     /// Maximum rate for this electron for any energy below emax
     /// May over-estimate the rate
-    pub maximum_rate:  fn(&Electron<'sc>, emax: f64) -> f64,
+    pub maximum_rate:  fn(&Electron, emax: f64) -> f64,
     // TODO: Maybe it's better to take a &mut Electron?
     // Electron doesn't carry much data though so whatever
-    pub resulting_state: fn(&Electron<'sc>, &mut R) -> Electron<'sc>,
+    pub resulting_state: fn(&Electron, &mut R) -> Electron,
 }
 
 #[derive(PartialEq, Clone, Copy)]
 pub enum PhononType { Emission, Absorption }
 
 // All rates in s^-1
-impl<'sc> Electron<'sc> {
-    pub fn all_mechanisms<R: Rng>() -> Box<[ScatteringMechanism<'sc, R>]> {
+impl Electron {
+    pub fn all_mechanisms<R: Rng>() -> Box<[ScatteringMechanism<R>]> {
         let intra_ac_phonon = ScatteringMechanism {
             name_full: "Intravalley acoustic phonon",
             name_short: "intra ac. phonon",
@@ -364,7 +365,7 @@ impl<'sc> Electron<'sc> {
     /// Resulting state after an isotropic (independent of k') collision resulting in an energy of `res_energy`
     /// TODO: This assumes parabolic bands for most scattering mechanisms dependent on the overlap integral between k and k'
     /// For low energy (αE << 1) G(k, k') is isotopic
-    pub fn scatter_isotropic<R: Rng>(&self, rng: &mut R, res_energy: f64) -> Electron<'sc> {
+    pub fn scatter_isotropic<R: Rng>(&self, rng: &mut R, res_energy: f64) -> Electron {
         let k_res_mag = self.valley().kmag_for_e(res_energy);
 
         // Spherical coordinates: pick ϕ uniformly, pick θ = asin(r) for r ∈ [-1, 1]
@@ -378,12 +379,13 @@ impl<'sc> Electron<'sc> {
         ];
         Electron {
             k: k_res,
+            sc: self.sc.clone(),
             ..*self
         }
     }
 
     // Resulting state after a collision where the probability of a state k' is proportional to |k-k'|⁻²
-    pub fn scatter_mag2<R: Rng>(&self, rng: &mut R, res_energy: f64) -> Electron<'sc> {
+    pub fn scatter_mag2<R: Rng>(&self, rng: &mut R, res_energy: f64) -> Electron {
         let kmag = self.k.iter().map(|x| x.powi(2)).sum::<f64>().sqrt();
         let k_res_mag = self.valley().kmag_for_e(res_energy);
 
@@ -404,12 +406,13 @@ impl<'sc> Electron<'sc> {
 
         Electron {
             k: k_res,
+            sc: self.sc.clone(),
             ..*self
         }
     }
 
     // CW approach, from [monte-carlo-book-1989.pdf]
-    pub fn scatter_impurity<R: Rng>(&self, rng: &mut R) -> Electron<'sc> {
+    pub fn scatter_impurity<R: Rng>(&self, rng: &mut R) -> Electron {
         let kmag = self.k.iter().map(|x| x.powi(2)).sum::<f64>().sqrt();
         let coord_sys = CoordSystem::given_z(self.k);
 
@@ -426,6 +429,7 @@ impl<'sc> Electron<'sc> {
 
         Electron {
             k: k_res,
+            sc: self.sc.clone(),
             ..*self
         }
     }
@@ -522,9 +526,6 @@ pub struct StepInfo {
     pub maximum_assumed_energy: f64,
 }
 
-impl StepInfo {
-}
-
 // TODO: Not needed I think ever
 // Useful for plotting free flights
 // equal to dk/dt over flight
@@ -534,7 +535,7 @@ pub struct FlightResult {
     pub k_acceleration: [f64; 3],
 }
 
-impl<'sc> Electron<'sc> {
+impl Electron {
     pub fn free_flight_time<R: Rng>(&mut self, rng: &mut R, info: &StepInfo) -> f64 {
         // TODO: This should be cached. Not sure exactly where though
         // Scattering should probably be the semiconductor's responsibility
@@ -588,7 +589,7 @@ impl<'sc> Electron<'sc> {
         }
     }
 
-    pub fn scatter<R: Rng>(&mut self, info: &StepInfo, rng: &mut R) -> Option<ScatteringMechanism<'sc, R>> {
+    pub fn scatter<R: Rng>(&mut self, info: &StepInfo, rng: &mut R) -> Option<ScatteringMechanism<R>> {
         let mechs = Electron::all_mechanisms();
         let Γ = mechs.iter().map(|m| (m.maximum_rate)(&self, info.maximum_assumed_energy)).sum::<f64>();
 

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use gambling_simulator::consts::{ELECTRON_CHARGE, EPS0};
 use gambling_simulator::semiconductor::{Electron, Semiconductor, StepInfo};
 use gambling_simulator::units::{self, EV, NM, PER_CM_CUBED, PS, Unit};
@@ -46,12 +48,8 @@ fn main() {
 
     let scs = binner_x.steps().map(|x| {
         let mut sc = Semiconductor::GaAs(temperature);
-        if x < 0. {
-            sc.impurity_density = doping_level_1;
-        } else {
-            sc.impurity_density = doping_level_2;
-        }
-        sc
+        sc.impurity_density = if x < 0. { doping_level_1 } else { doping_level_2 };
+        Arc::new(sc)
     }).collect::<Vec<_>>();
 
     let mut electrons: Vec<Electron> = Vec::new();
@@ -64,7 +62,7 @@ fn main() {
 
         let i = binner_x.bin(x).unwrap();
         electrons.push(Electron::thermalized(
-            &mut rng, &scs[i], 0, [x, 0., 0.,], [0., 0., 0.,]
+            &mut rng, scs[i].clone(), 0, [x, 0., 0.,], [0., 0., 0.,]
         ));
     }
 
@@ -202,7 +200,7 @@ fn main() {
                         // but pick electron with velocity from the right way
                         let field = [efield_histo.get(binner_x.end_si), 0., 0.,];
                         loop {
-                            *electron = Electron::thermalized(&mut rng, &scs[scs.len()-1], 0, [binner_x.end_si+binner_x.bin_size()/2., 0., 0.], field);
+                            *electron = Electron::thermalized(&mut rng, scs[scs.len()-1].clone(), 0, [binner_x.end_si+binner_x.bin_size()/2., 0., 0.], field);
                             if electron.k[0] < 0. {
                                 break;
                             }
@@ -210,7 +208,7 @@ fn main() {
                     } else if electron.pos[0] < binner_x.start_si-binner_x.bin_size()/2. {
                         let field = [efield_histo.get(binner_x.start_si), 0., 0.,];
                         loop {
-                            *electron = Electron::thermalized(&mut rng, &scs[0], 0, [binner_x.start_si-binner_x.bin_size()/2., 0., 0.], field);
+                            *electron = Electron::thermalized(&mut rng, scs[0].clone(), 0, [binner_x.start_si-binner_x.bin_size()/2., 0., 0.], field);
                             if electron.k[0] > 0. {
                                 break;
                             }
@@ -221,7 +219,7 @@ fn main() {
                     continue;
                 };
                 // sync with whatever cell we're in
-                electron.sc = &scs[idx];
+                electron.sc = scs[idx].clone();
 
                 let info = StepInfo {
                     applied_field: [efield_histo.get(electron.pos[0]), 0., 0.,],

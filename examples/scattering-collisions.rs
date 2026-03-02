@@ -1,6 +1,7 @@
 #![allow(non_snake_case, mixed_script_confusables)]
 
 use std::f64::consts::PI;
+use std::sync::Arc;
 
 use gambling_simulator::semiconductor::{Electron, Semiconductor};
 use gambling_simulator::units::{Unit, EV};
@@ -20,7 +21,7 @@ use crate::common::linspace_incl;
 fn main() {
     let mut r = ChaCha8Rng::from_os_rng();
 
-    let sample_sc = Semiconductor::GaAs(300.0);
+    let sample_sc = Arc::new(Semiconductor::GaAs(300.0));
     let Γ_valley_idx = sample_sc.valleys.iter().position(|x| x.name == "Γ").expect("No Γ valley in GaAs");
     let Γ_valley = &sample_sc.valleys[Γ_valley_idx];
 
@@ -29,7 +30,7 @@ fn main() {
 
     let n = 500;
     let e = Electron {
-        sc: &sample_sc,
+        sc: sample_sc.clone(),
         valley_idx: Γ_valley_idx,
         k: [k_mag, 0., 0.],
         pos: [0., 0., 0.,],
