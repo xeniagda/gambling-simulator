@@ -542,12 +542,11 @@ pub use generate_histogram_collection_struct;
 mod tests {
     pub use super::*;
     pub use crate::units;
+    pub use crate::ensure_send;
 
-    fn pred_is_sync<T: Sync>() {}
-    // This will fail to compile if Histogram ever turns !Sync
     #[allow(unused)]
-    fn histo_is_sync<B: Binner + Sync>() {
-        pred_is_sync::<Histogram<B>>();
+    fn _ensure_histo_is_send<B: Binner + Sync>() {
+        ensure_send::<Histogram<B>>();
     }
 
 
