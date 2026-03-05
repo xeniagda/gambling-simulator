@@ -132,6 +132,87 @@ impl Semiconductor {
             v_model * efield[2] / efield_mag,
         ]
     }
+
+    pub fn all_mechanisms<R: Rng>() -> Box<[ScatteringMechanism<R>]> {
+        let intra_ac_phonon = ScatteringMechanism {
+            name_full: "Intravalley acoustic phonon",
+            name_short: "intra ac. phonon",
+            rate: |e| e.rate_intra_ac_phonon(None),
+            // Acoustic phonon scattering rate is strictly increasing
+            maximum_rate: |el, en| el.rate_intra_ac_phonon(Some(en)),
+            resulting_state: |e, r| e.scatter_isotropic(r, e.energy()),
+        };
+        let intra_opt_phonon_abs = ScatteringMechanism {
+            name_full: "Intravalley optical phonon absorption",
+            name_short: "intra opt. phonon abs.",
+            rate: |e| e.rate_intra_opt_phonon(PhononType::Absorption, None),
+            // Acoustic phonon scattering rate is strictly decreasing
+            maximum_rate: |el, _en| el.rate_intra_opt_phonon(PhononType::Absorption, Some(0.)),
+            // For absorption we gain energy from the phonon
+            resulting_state: |e, r| e.scatter_mag2(r, e.energy() + e.valley().optical_phonon_energy),
+        };
+        let intra_opt_phonon_em = ScatteringMechanism {
+            name_full: "Intravalley optical phonon emission",
+            name_short: "intra opt. phonon em.",
+            rate: |e| e.rate_intra_opt_phonon(PhononType::Emission, None),
+            // The maximum is somewhere around 130meV
+            // Add a factor of 2 for safety (:
+            maximum_rate: |el, _en| 2. * el.rate_intra_opt_phonon(PhononType::Emission, Some(EV::to_si(0.125))),
+            // For absorption we gain energy from the phonon
+            resulting_state: |e, r| e.scatter_mag2(r, e.energy() - e.valley().optical_phonon_energy),
+        };
+        let impurity = ScatteringMechanism {
+            name_full: "Impurity scattering",
+            name_short: "imp.",
+            rate: |e| e.rate_impurity(None),
+            // Strictly increasing
+            maximum_rate: |el, en| el.rate_impurity(Some(en)),
+            resulting_state: |e, r| e.scatter_impurity(r),
+        };
+        let mut mechanisms = vec![intra_ac_phonon, intra_opt_phonon_abs, intra_opt_phonon_em, impurity];
+
+        macro_rules! gen_intervalley {
+            ($dest_valley_idx:expr, $name:expr) => {
+                let inter_opt_phonon_abs = ScatteringMechanism {
+                    name_full: concat!("Intervalley optical phonon absorption to ", $name),
+                    name_short: concat!("inter →", $name, " opt. phonon abs"),
+                    rate: |e| e.rate_inter_opt_phonon(PhononType::Absorption, $dest_valley_idx, None),
+                    // Strictly increasing
+                    maximum_rate: |el, en| el.rate_inter_opt_phonon(PhononType::Absorption, $dest_valley_idx, Some(en)),
+                    // For absorption we gain energy from the phonon
+                    resulting_state: |e, r| {
+                        let energy_after = e.energy() + e.valley().energy - e.sc.valleys[$dest_valley_idx].energy + e.valley().intervalley_phonon_energy[$dest_valley_idx];
+                        let mut e_ = e.clone();
+                        e_.valley_idx = $dest_valley_idx;
+                        e_.scatter_isotropic(r, energy_after)
+                    },
+                };
+                mechanisms.push(inter_opt_phonon_abs);
+
+                let inter_opt_phonon_em = ScatteringMechanism {
+                    name_full: concat!("Intervalley optical phonon emission to ", $name),
+                    name_short: concat!("inter →", $name, " opt. phonon em"),
+                    rate: |e| e.rate_inter_opt_phonon(PhononType::Emission, $dest_valley_idx, None),
+                    // Strictly increasing
+                    maximum_rate: |el, en| el.rate_inter_opt_phonon(PhononType::Emission, $dest_valley_idx, Some(en)),
+                    // For absorption we gain energy from the phonon
+                    resulting_state: |e, r| {
+                        let energy_after = e.energy() + e.valley().energy - e.sc.valleys[$dest_valley_idx].energy - e.valley().intervalley_phonon_energy[$dest_valley_idx];
+                        let mut e_ = e.clone();
+                        e_.valley_idx = $dest_valley_idx;
+                        e_.scatter_isotropic(r, energy_after)
+                    },
+                };
+                mechanisms.push(inter_opt_phonon_em);
+            }
+        }
+        // only works for GaAs!!!!
+        gen_intervalley!(0, "Γ");
+        gen_intervalley!(1, "L");
+        gen_intervalley!(2, "X");
+
+        mechanisms.into_boxed_slice()
+    }
 }
 
 #[derive(Clone)]
@@ -262,6 +343,7 @@ impl CoordSystem {
     }
 }
 
+#[derive(Clone)]
 pub struct ScatteringMechanism<R: Rng> {
     pub name_full: &'static str,
     pub name_short: &'static str,
@@ -281,86 +363,6 @@ pub enum PhononType { Emission, Absorption }
 
 // All rates in s^-1
 impl Electron {
-    pub fn all_mechanisms<R: Rng>() -> Box<[ScatteringMechanism<R>]> {
-        let intra_ac_phonon = ScatteringMechanism {
-            name_full: "Intravalley acoustic phonon",
-            name_short: "intra ac. phonon",
-            rate: |e| e.rate_intra_ac_phonon(None),
-            // Acoustic phonon scattering rate is strictly increasing
-            maximum_rate: |el, en| el.rate_intra_ac_phonon(Some(en)),
-            resulting_state: |e, r| e.scatter_isotropic(r, e.energy()),
-        };
-        let intra_opt_phonon_abs = ScatteringMechanism {
-            name_full: "Intravalley optical phonon absorption",
-            name_short: "intra opt. phonon abs.",
-            rate: |e| e.rate_intra_opt_phonon(PhononType::Absorption, None),
-            // Acoustic phonon scattering rate is strictly decreasing
-            maximum_rate: |el, _en| el.rate_intra_opt_phonon(PhononType::Absorption, Some(0.)),
-            // For absorption we gain energy from the phonon
-            resulting_state: |e, r| e.scatter_mag2(r, e.energy() + e.valley().optical_phonon_energy),
-        };
-        let intra_opt_phonon_em = ScatteringMechanism {
-            name_full: "Intravalley optical phonon emission",
-            name_short: "intra opt. phonon em.",
-            rate: |e| e.rate_intra_opt_phonon(PhononType::Emission, None),
-            // The maximum is somewhere around 130meV
-            // Add a factor of 2 for safety (:
-            maximum_rate: |el, _en| 2. * el.rate_intra_opt_phonon(PhononType::Emission, Some(EV::to_si(0.125))),
-            // For absorption we gain energy from the phonon
-            resulting_state: |e, r| e.scatter_mag2(r, e.energy() - e.valley().optical_phonon_energy),
-        };
-        let impurity = ScatteringMechanism {
-            name_full: "Impurity scattering",
-            name_short: "imp.",
-            rate: |e| e.rate_impurity(None),
-            // Strictly increasing
-            maximum_rate: |el, en| el.rate_impurity(Some(en)),
-            resulting_state: |e, r| e.scatter_impurity(r),
-        };
-        let mut mechanisms = vec![intra_ac_phonon, intra_opt_phonon_abs, intra_opt_phonon_em, impurity];
-
-        macro_rules! gen_intervalley {
-            ($dest_valley_idx:expr, $name:expr) => {
-                let inter_opt_phonon_abs = ScatteringMechanism {
-                    name_full: concat!("Intervalley optical phonon absorption to ", $name),
-                    name_short: concat!("inter →", $name, " opt. phonon abs"),
-                    rate: |e| e.rate_inter_opt_phonon(PhononType::Absorption, $dest_valley_idx, None),
-                    // Strictly increasing
-                    maximum_rate: |el, en| el.rate_inter_opt_phonon(PhononType::Absorption, $dest_valley_idx, Some(en)),
-                    // For absorption we gain energy from the phonon
-                    resulting_state: |e, r| {
-                        let energy_after = e.energy() + e.valley().energy - e.sc.valleys[$dest_valley_idx].energy + e.valley().intervalley_phonon_energy[$dest_valley_idx];
-                        let mut e_ = e.clone();
-                        e_.valley_idx = $dest_valley_idx;
-                        e_.scatter_isotropic(r, energy_after)
-                    },
-                };
-                mechanisms.push(inter_opt_phonon_abs);
-
-                let inter_opt_phonon_em = ScatteringMechanism {
-                    name_full: concat!("Intervalley optical phonon emission to ", $name),
-                    name_short: concat!("inter →", $name, " opt. phonon em"),
-                    rate: |e| e.rate_inter_opt_phonon(PhononType::Emission, $dest_valley_idx, None),
-                    // Strictly increasing
-                    maximum_rate: |el, en| el.rate_inter_opt_phonon(PhononType::Emission, $dest_valley_idx, Some(en)),
-                    // For absorption we gain energy from the phonon
-                    resulting_state: |e, r| {
-                        let energy_after = e.energy() + e.valley().energy - e.sc.valleys[$dest_valley_idx].energy - e.valley().intervalley_phonon_energy[$dest_valley_idx];
-                        let mut e_ = e.clone();
-                        e_.valley_idx = $dest_valley_idx;
-                        e_.scatter_isotropic(r, energy_after)
-                    },
-                };
-                mechanisms.push(inter_opt_phonon_em);
-            }
-        }
-        // only works for GaAs!!!!
-        gen_intervalley!(0, "Γ");
-        gen_intervalley!(1, "L");
-        gen_intervalley!(2, "X");
-
-        mechanisms.into_boxed_slice()
-    }
 
     /// Resulting state after an isotropic (independent of k') collision resulting in an energy of `res_energy`
     /// TODO: This assumes parabolic bands for most scattering mechanisms dependent on the overlap integral between k and k'
@@ -520,8 +522,9 @@ impl Electron {
     }
 }
 
-#[derive(Clone, Copy, Default)]
-pub struct StepInfo {
+#[derive(Clone, Default)]
+pub struct StepInfo<R: Rng> {
+    pub scattering_mechanisms: Box<[ScatteringMechanism<R>]>, // Cache from Semiconductor::scattering_mechanisms
     pub applied_field: [f64; 3],
     pub maximum_assumed_energy: f64,
 }
@@ -536,13 +539,12 @@ pub struct FlightResult {
 }
 
 impl Electron {
-    pub fn free_flight_time<R: Rng>(&mut self, rng: &mut R, info: &StepInfo) -> f64 {
+    pub fn free_flight_time<R: Rng>(&mut self, rng: &mut R, info: &StepInfo<R>) -> f64 {
         // TODO: This should be cached. Not sure exactly where though
         // Scattering should probably be the semiconductor's responsibility
-        let mechs = Electron::all_mechanisms::<R>();
 
         // Free flight
-        let Γ = mechs.iter().map(|m| (m.maximum_rate)(&self, info.maximum_assumed_energy)).sum::<f64>();
+        let Γ = info.scattering_mechanisms.iter().map(|m| (m.maximum_rate)(&self, info.maximum_assumed_energy)).sum::<f64>();
         // TODO: What's the smallest number we can take the ln of without getting -infinity?
         let t = -1./Γ * rng.random_range(0f64 ..= 1f64).ln();
 
@@ -550,7 +552,7 @@ impl Electron {
     }
 
     /// Does one step in the monte carlo process
-    pub fn free_flight(&mut self, dt: f64, info: &StepInfo) -> FlightResult {
+    pub fn free_flight<R: Rng>(&mut self, dt: f64, info: &StepInfo<R>) -> FlightResult {
         let force = [
             -ELECTRON_CHARGE * info.applied_field[0],
             -ELECTRON_CHARGE * info.applied_field[1],
@@ -589,12 +591,11 @@ impl Electron {
         }
     }
 
-    pub fn scatter<R: Rng>(&mut self, info: &StepInfo, rng: &mut R) -> Option<ScatteringMechanism<R>> {
-        let mechs = Electron::all_mechanisms();
-        let Γ = mechs.iter().map(|m| (m.maximum_rate)(&self, info.maximum_assumed_energy)).sum::<f64>();
+    pub fn scatter<'i, R: Rng>(&mut self, info: &'i StepInfo<R>, rng: &mut R) -> Option<&'i ScatteringMechanism<R>> {
+        let Γ = info.scattering_mechanisms.iter().map(|m| (m.maximum_rate)(&self, info.maximum_assumed_energy)).sum::<f64>();
 
         let mut r = Γ * rng.random_range(0. ..= 1.);
-        for mech in mechs {
+        for mech in &info.scattering_mechanisms {
             let prob = (mech.rate)(&self);
             r -= prob;
             if r < 0. {

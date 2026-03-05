@@ -6,7 +6,7 @@ use gambling_simulator::{semiconductor::{Electron, Semiconductor, StepInfo}, uni
 use gambling_simulator::histogram::{generate_histogram_collection_struct, Histogram, Binner2D, UnitBinner};
 
 use plotly::Plot;
-use rand::SeedableRng;
+use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 mod common;
 use tqdm::tqdm;
@@ -19,16 +19,16 @@ generate_histogram_collection_struct! {
     }
 }
 
-fn generate_histogram(
+fn generate_histogram<R: Rng + SeedableRng>(
     thread_idx: usize,
     sc: Arc<Semiconductor>,
 
     mut histo: Histograms,
-    step_info: StepInfo, // applied_field overwritten
+    step_info: StepInfo<R>, // applied_field overwritten
 
     n_electrons: usize,
 ) -> Histograms {
-    let mut rng = ChaCha8Rng::from_os_rng();
+    let mut rng = R::from_os_rng();
 
     let t_stop = histo.positions.binner.major.end_si;
 
@@ -63,6 +63,7 @@ fn main() {
     let step_info = StepInfo {
         applied_field: [ex, 0., 0.], // will be overwritten
         maximum_assumed_energy: energy_max,
+        scattering_mechanisms: Semiconductor::all_mechanisms::<ChaCha8Rng>(),
     };
 
     let binner_time = UnitBinner::<units::PS>::new(
@@ -90,7 +91,7 @@ fn main() {
         };
 
         let mut handles = (0..n_threads).map(|thread_idx| {
-            let (sample_sc, worker) = (sample_sc.clone(), histo.get_worker());
+            let (sample_sc, worker, step_info) = (sample_sc.clone(), histo.get_worker(), step_info.clone());
             let handle = scope.spawn(move || {
                 generate_histogram(thread_idx, sample_sc, worker, step_info, n_electrons)
             });

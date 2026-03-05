@@ -6,7 +6,7 @@ use gambling_simulator::{semiconductor::{Electron, Semiconductor, StepInfo}, uni
 use gambling_simulator::histogram::{generate_histogram_collection_struct, Histogram, UnitBinner, DiscreteBinner, Binner2D};
 
 use plotly::{common::{Line, Mode}, layout::Axis, Layout, Plot, Scatter};
-use rand::SeedableRng;
+use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 mod common;
 use tqdm::tqdm;
@@ -26,16 +26,16 @@ generate_histogram_collection_struct! {
     }
 }
 
-fn generate_histogram(
+fn generate_histogram<R: Rng + SeedableRng>(
     thread_idx: usize,
     sc: Arc<Semiconductor>,
 
     mut histograms: Histograms,
-    step_info: StepInfo, // applied_field overwritten
+    step_info: StepInfo<R>, // applied_field overwritten
 
     n_electrons: usize,
 ) -> Histograms {
-    let mut rng = ChaCha8Rng::from_os_rng();
+    let mut rng = R::from_os_rng();
 
     let t_stop = histograms.velocity.binner.major.end_si;
 
@@ -86,7 +86,7 @@ fn main() {
 
     let binner_mechanisms: BinnerMechanism = {
         let mut mechanisms = vec!["self-scatter"];
-        let all_mechs = Electron::all_mechanisms::<ChaCha8Rng>();
+        let all_mechs = Semiconductor::all_mechanisms::<ChaCha8Rng>();
         mechanisms.extend(all_mechs.into_iter().map(|x| x.name_short));
         DiscreteBinner::new(mechanisms)
     };
@@ -112,6 +112,7 @@ fn main() {
     let step_info = StepInfo {
         applied_field: [e_x, 0., 0.],
         maximum_assumed_energy: energy_max,
+        scattering_mechanisms: Semiconductor::all_mechanisms::<ChaCha8Rng>(),
     };
 
     let n_electrons = 10000;
@@ -125,7 +126,7 @@ fn main() {
         };
 
         let mut handles = (0..n_threads).map(|thread_idx| {
-            let (sample_sc, worker) = (sample_sc.clone(), histograms.get_worker());
+            let (sample_sc, worker, step_info) = (sample_sc.clone(), histograms.get_worker(), step_info.clone());
             let handle = scope.spawn(move || {
                 generate_histogram(thread_idx, sample_sc, worker, step_info, n_electrons)
             });

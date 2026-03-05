@@ -6,7 +6,7 @@ use gambling_simulator::{semiconductor::{Electron, Semiconductor, StepInfo}, uni
 use gambling_simulator::histogram::{generate_histogram_collection_struct, Histogram, Binner, DiscreteBinner, UnitBinner, Binner2D};
 
 use plotly::{Layout, Plot, Scatter, common::{Line, Marker, Mode}, layout::Axis};
-use rand::SeedableRng;
+use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 mod common;
 use common::{write_plots, VALLEY_COLORS};
@@ -23,17 +23,17 @@ generate_histogram_collection_struct! {
     }
 }
 
-fn generate_histogram(
+fn generate_histogram<R: Rng + SeedableRng>(
     thread_idx: usize,
     mut histograms: Histograms,
 
     sc: Arc<Semiconductor>,
-    step_info: StepInfo,
+    step_info: StepInfo<R>,
 
     n_electrons: usize,
     t_stop: f64,
 ) -> Histograms {
-    let mut rng = ChaCha8Rng::from_os_rng();
+    let mut rng = R::from_os_rng();
 
     for _run in tqdm(0..n_electrons).desc(Some(format!("Thread #{thread_idx: <4}"))) {
         let mut electron = Electron::thermalized_in_field(&mut rng, sc.clone(), [0., 0., 0.], step_info.applied_field);
@@ -68,14 +68,15 @@ fn main() {
     let e_x_si = units::KV_PER_CM::to_si(e_x);
 
     let step_info = StepInfo {
-        applied_field: [e_x_si, 0., 0.],
+        applied_field: [e_x_si, 0., 0.], // will be overwritten
         maximum_assumed_energy: units::EV::to_si(2.0),
+        scattering_mechanisms: Semiconductor::all_mechanisms::<ChaCha8Rng>(),
     };
 
     let mechanism_names: Vec<&'static str> = {
         let mut mechanism_names = vec!["self-scatter"];
         mechanism_names.extend(
-            Electron::all_mechanisms::<ChaCha8Rng>().iter()
+            step_info.scattering_mechanisms.iter()
                 .map(|x| x.name_short)
         );
         mechanism_names
@@ -125,7 +126,7 @@ fn main() {
         let mut histograms = histograms;
 
         let mut handles = (0..n_threads).map(|thread_idx| {
-            let (sample_sc, worker) = (sample_sc.clone(), histograms.get_worker());
+            let (sample_sc, worker, step_info) = (sample_sc.clone(), histograms.get_worker(), step_info.clone());
             let handle = scope.spawn(move || generate_histogram(thread_idx, worker, sample_sc, step_info,  n_electrons, t_stop));
             (handle, thread_idx)
         }).collect::<Vec<_>>();

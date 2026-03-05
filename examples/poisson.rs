@@ -224,6 +224,7 @@ fn main() {
                 let info = StepInfo {
                     applied_field: [efield_histo.get(electron.pos[0]), 0., 0.,],
                     maximum_assumed_energy,
+                    scattering_mechanisms: Semiconductor::all_mechanisms::<ChaCha8Rng>(),
                 };
 
                 if t + *time_left_in_free_flight > poisson_interval {

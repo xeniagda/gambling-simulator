@@ -6,7 +6,7 @@ use gambling_simulator::{semiconductor::{Electron, Semiconductor, StepInfo}, uni
 use gambling_simulator::histogram::{generate_histogram_collection_struct, Histogram, Binner, Binner2D, UnitBinner, DiscreteBinner};
 
 use plotly::{common::{DashType, Line, Mode}, layout::Axis, Layout, Plot, Scatter};
-use rand::SeedableRng;
+use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 mod common;
 use tqdm::tqdm;
@@ -23,17 +23,17 @@ generate_histogram_collection_struct! {
     }
 }
 
-fn generate_histogram(
+fn generate_histogram<R: Rng + SeedableRng>(
     thread_idx: usize,
     sc: Arc<Semiconductor>,
 
     mut histo: Histograms,
-    mut step_info: StepInfo, // applied_field overwritten
+    mut step_info: StepInfo<R>, // applied_field overwritten
 
     n_electrons: usize,
     binner_time: UnitBinner<units::PS>,
 ) -> Histograms {
-    let mut rng = ChaCha8Rng::from_os_rng();
+    let mut rng = R::from_os_rng();
 
     let steps: Vec<_> = histo.velocity.binner.major.steps().collect();
     for efield in tqdm(steps).desc(Some(format!("Thread #{thread_idx: <4}"))) {
@@ -80,6 +80,7 @@ fn main() {
     let step_info = StepInfo {
         applied_field: [0., 0., 0.], // will be overwritten
         maximum_assumed_energy: energy_max,
+        scattering_mechanisms: Semiconductor::all_mechanisms::<ChaCha8Rng>(),
     };
 
     let binner_time = UnitBinner::<units::PS>::new(
@@ -132,7 +133,7 @@ fn main() {
     );
 
     let mechanism_names: Vec<&'static str> =
-        Electron::all_mechanisms::<ChaCha8Rng>().iter()
+        step_info.scattering_mechanisms.iter()
             .map(|x| x.name_short)
             .collect();
 
@@ -168,7 +169,7 @@ fn main() {
         };
 
         let mut handles = (0..n_threads).map(|thread_idx| {
-            let (sample_sc, binner_time, worker) = (sample_sc.clone(), binner_time.clone(), histo.get_worker());
+            let (sample_sc, binner_time, worker, step_info) = (sample_sc.clone(), binner_time.clone(), histo.get_worker(), step_info.clone());
             let handle = scope.spawn(move || {
                 generate_histogram(thread_idx, sample_sc, worker, step_info, n_electrons, binner_time)
             });

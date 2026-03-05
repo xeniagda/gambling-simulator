@@ -23,6 +23,7 @@ fn main() {
     let step_info = StepInfo {
         applied_field: [e_x, 0., 0.],
         maximum_assumed_energy: energy_max,
+        scattering_mechanisms: Semiconductor::all_mechanisms::<ChaCha8Rng>(),
     };
 
     let mut plot_traces = Plot::new();

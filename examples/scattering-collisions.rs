@@ -36,7 +36,7 @@ fn main() {
         pos: [0., 0., 0.,],
     };
 
-    let mechs = Electron::all_mechanisms();
+    let mechs = Semiconductor::all_mechanisms();
     let mut plots = Vec::new();
     for mech in mechs {
         let mut plot = Plot::new();
