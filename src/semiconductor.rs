@@ -65,6 +65,10 @@ pub struct Semiconductor {
     pub impurity_density: f64,
 }
 
+fn _semiconductor_is_sync() {
+    crate::ensure_sync::<Semiconductor>();
+}
+
 impl Semiconductor {
     pub fn GaAs(temperature: f64) -> Semiconductor {
         let a = 5.65e-10;
