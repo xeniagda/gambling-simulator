@@ -193,5 +193,66 @@ pub mod plot_histogram {
     }
 }
 
+pub mod plot_utils {
+    use std::marker::PhantomData;
+
+    use gambling_simulator::units::Unit;
+    use plotly::{Layout, Plot, Scatter, layout::Axis};
+
+    #[allow(unused)]
+    pub fn set_default_layout(plot: &mut Plot, title: &str) {
+        plot.set_layout(
+            Layout::new()
+                .width(1200).height(800)
+                .title(title)
+        )
+    }
+
+    #[allow(unused)]
+    pub struct UnitPlotter<X: Unit, Y: Unit> {
+        _xy: PhantomData<(X, Y)>,
+        title: String,
+        x_name: String,
+        y_name: String,
+    }
+
+    impl<X: Unit, Y: Unit> UnitPlotter<X, Y> {
+        #[allow(unused)]
+        pub fn new<T: ToString, XS: ToString, YS: ToString>(title: T, x_name: XS, y_name: YS) -> Self {
+            Self {
+                _xy: PhantomData,
+                title: title.to_string(),
+                x_name: x_name.to_string(),
+                y_name: y_name.to_string(),
+            }
+        }
+
+        #[allow(unused)]
+        pub fn setup(&self, plot: &mut Plot) {
+            set_default_layout(plot, &self.title);
+            plot.set_layout(
+                plot.layout().clone()
+                    .x_axis(Axis::new().title(format!(r"${}\ [\text{{{}}}]$", self.x_name, X::NAME)))
+                    .y_axis(Axis::new().title(format!(r"${}\ [\text{{{}}}]$", self.y_name, Y::NAME)))
+            )
+        }
+
+        #[allow(unused)]
+        pub fn make_plot(&self) -> Plot {
+            let mut p = Plot::new();
+            self.setup(&mut p);
+            p
+        }
+
+        #[allow(unused)]
+        pub fn make_trace<XI: IntoIterator<Item=f64>, YI: IntoIterator<Item=f64>>(&self, x: XI, y: YI) -> Box<Scatter<f64, f64>> {
+            Scatter::new(
+                x.into_iter().map(X::from_si).collect(),
+                y.into_iter().map(Y::from_si).collect(),
+            )
+        }
+    }
+}
+
 #[allow(dead_code)] // main is required for LSP not to error since common is technically an example, however when using it as a module main is considered dead
 fn main() {}
