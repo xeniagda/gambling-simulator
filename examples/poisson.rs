@@ -102,9 +102,16 @@ fn main() {
     // this vector stores the amount of remaining time for the electron post-flight
     let mut time_left_in_free_flight: Vec<_> = electrons.iter().map(|_| 0.).collect();
 
+    let wall_time_started = std::time::Instant::now();
+
     let mut last_plot_at = 0.;
-    for step in tqdm::tqdm(0..(simulation_time/poisson_interval) as usize) {
+    let count = (simulation_time/poisson_interval) as usize;
+    let mut tqdm = tqdm::tqdm(0..count);
+    for step in 0..count {
+        tqdm.next();
         let t0 = step as f64 * poisson_interval;
+        let elapsed = wall_time_started.elapsed().as_secs_f64();
+        tqdm.set_desc(Some(format!("t = {}, {:.3} ps/s ({:.1} dBs/s)", units::PS::format(t0), units::PS::from_si(t0) / elapsed, (t0/elapsed).log10()*10.)));
 
         // calculate voltages in each cell
 
