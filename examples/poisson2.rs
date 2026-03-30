@@ -7,7 +7,7 @@ use std::sync::{
 };
 use std::time::Instant;
 
-use gambling_simulator::{consts::{self, BOLTZMANN, ELECTRON_CHARGE, EPS0}, semiconductor::StepInfo, units::{self, Unit}};
+use gambling_simulator::{consts::{BOLTZMANN, PLANCK_BAR_SI, ELECTRON_CHARGE, EPS0}, semiconductor::StepInfo, units::{self, Unit}};
 use gambling_simulator::semiconductor::{Semiconductor, Electron};
 use gambling_simulator::{ensure_send, ensure_sync};
 
@@ -16,10 +16,9 @@ use rand_chacha::ChaCha8Rng;
 
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
-use plotly::Plot;
+use plotly::{Plot, common::Line};
 use rustfft::FftPlanner;
 use num_complex::{Complex, ComplexFloat};
-use errorfunctions::RealErrorFunctions;
 
 use atomic_float::AtomicF64;
 
@@ -127,6 +126,7 @@ struct PoissonState {
     efield: Vec<AtomicF64>,
 
     // Cleared by poisson thread, added to by MC thread
+    // Represents flux OUT of area
     superparticle_flux: (AtomicF64, AtomicF64),
 
     // How many q_0 does each simulated electron represent?
@@ -253,7 +253,8 @@ fn monte_carlo_simulator<R: Rng>(
     let mut waited_since = Instant::now();
 
     let mut n_superparticles_left_domain_total = (0, 0,); // left side, right side
-    let (mut rate_left, mut rate_right) = (0., 0.,);
+
+    let mut mean_velocity_per_cell: Vec<_> = std::iter::repeat(0.).take(mesh.n_cells).collect();
 
     // Rates for injecting carriers to keep equilibrium
 
@@ -263,15 +264,16 @@ fn monte_carlo_simulator<R: Rng>(
         // Update spinner
         spinner.inc(1);
         let elapsed = wall_time_started.elapsed().as_secs_f64();
+        let mean_velocity = mean_velocity_per_cell.iter().sum::<f64>() / mesh.n_cells as f64;
+
         spinner.set_message(format!(
-            "{:>5.3} k e⁻, {:.3} k ff-sc/s, {:>4.1}% time spent waiting. {:.3}/{:.3} e⁻ leaving/ps (expect {:.3}/{:.3})",
+            "{:>5.3} k e⁻, {:.3} k ff-sc/s, {:>4.1}% time spent waiting. {:.3}/{:.3} e⁻ leaving/ps, <v> = {}",
             (electrons.len() as f64) / 1e3,
             total_scattering as f64 / elapsed / 1e3,
             wall_time_spent_waiting / elapsed * 100.,
             (n_superparticles_left_domain_total.0 as f64 * poisson_state.superparticle_factor / (electrons.len() as f64 / poisson_state.total_superparticles)) / units::PS::from_si(start_time),
             (n_superparticles_left_domain_total.1 as f64 * poisson_state.superparticle_factor / (electrons.len() as f64 / poisson_state.total_superparticles)) / units::PS::from_si(start_time),
-            rate_left / units::PS::from_si(1.),
-            rate_right / units::PS::from_si(1.),
+            units::MILLION_CM_PER_SECOND::format(mean_velocity),
         ));
         match msg {
             MessageToMCThread::Accumulate => {
@@ -289,54 +291,86 @@ fn monte_carlo_simulator<R: Rng>(
                 tx_poisson.send(MessageToPoissonThread::Accumulated).expect("Couldn't reply to poisson thread!");
             }
             MessageToMCThread::FreeFlight { until_time }  => {
-                let electrons_to_process = electrons.drain(..).collect::<Vec<_>>();
                 let sim_time = until_time - start_time;
 
-                // Add electrons on left and right
-                let mut n_superparticles_left_domain = (0, 0);
+                let mut integrated_velocity_per_cell: Vec<f64> = std::iter::repeat(0.).take(mesh.n_cells).collect();
+                let mut integrated_time_per_cell: Vec<f64> = std::iter::repeat(0.).take(mesh.n_cells).collect();
 
-                let mut total_velocity_left_domain = 0.;
-
-                for (mut el, remaining_free_flight_duration) in electrons_to_process.into_iter().zip(remaining_free_flight_durations.iter_mut()) {
+                for (el, remaining_free_flight_duration) in electrons.iter_mut().zip(remaining_free_flight_durations.iter_mut()) {
                     let mut electron_flight_duration = 0.;
-                    let mut left_bounds = false;
                     loop {
                         // Sync electron with the cell it's in and get the electric field
-                        match (mesh.pos_to_fractional_idx(el.pos[0]), mesh.pos_to_fractional_idx_in_half_grid(el.pos[0])) {
+                        let cell_idx = match (mesh.pos_to_fractional_idx(el.pos[0]), mesh.pos_to_fractional_idx_in_half_grid(el.pos[0])) {
                             (Ok(sc_grid_idx), Ok(efield_grid_idx)) => {
-                                if sc_grid_idx.2  < 0.5 {
-                                    el.sc = semiconductors[sc_grid_idx.0].clone();
-                                } else {
-                                    el.sc = semiconductors[sc_grid_idx.1].clone();
-                                }
-
                                 let field_i = poisson_state.efield[efield_grid_idx.0].load(Ordering::Acquire);
                                 let field_j = poisson_state.efield[efield_grid_idx.1].load(Ordering::Acquire);
                                 let field = field_i * (1. - efield_grid_idx.2) + field_j * efield_grid_idx.2;
                                 step_info.applied_field[0] = field;
-                            }
 
-                            (Err(i), _) | (_, Err(i)) => {
-                                left_bounds = true;
-                                total_velocity_left_domain += el.velocity()[0];
-
-                                if i == -1 {
-                                    n_superparticles_left_domain.0 += 1;
+                                if sc_grid_idx.2  < 0.5 {
+                                    el.sc = semiconductors[sc_grid_idx.0].clone();
+                                    sc_grid_idx.0
                                 } else {
-                                    n_superparticles_left_domain.1 += 1;
+                                    el.sc = semiconductors[sc_grid_idx.1].clone();
+                                    sc_grid_idx.1
                                 }
-                                break;
                             }
-                        }
+                            (Err(i), _) | (_, Err(i)) => {
+                                let sc_left = semiconductors[0].clone();
+                                let sc_right = semiconductors.last().unwrap().clone();
+
+                                // Particle left domain
+                                if i == -1 {
+                                    poisson_state.superparticle_flux.0.fetch_add(1. / (sim_time * mesh.cross_section_area), Ordering::AcqRel);
+                                    n_superparticles_left_domain_total.0 += 1;
+                                } else {
+                                    poisson_state.superparticle_flux.1.fetch_add(1. / (sim_time * mesh.cross_section_area), Ordering::AcqRel);
+                                    n_superparticles_left_domain_total.1 += 1;
+                                }
+                                let inj_cell_idx;
+
+                                *el = Electron::thermalized(&mut rng, sc_left.clone(), 0, [0., 0., 0.,], el.velocity());
+                                // let inject_on_left_side = rng.random_range(0f64 .. (sc_left.impurity_density+sc_right.impurity_density)) < sc_left.impurity_density;
+                                let inject_on_left_side = el.k[0] > 0.;
+
+                                // Repopulate the electron, thermalized with grid
+                                if inject_on_left_side {
+                                    // Moving rightwards, put in the left of the domain
+                                    inj_cell_idx = 0;
+
+                                    let mut pos = mesh.position_inside_cell(&mut rng, inj_cell_idx);
+                                    pos[0] = mesh.x_start + mesh.delta_x()/2.;
+                                    el.pos = pos;
+
+                                    poisson_state.superparticle_flux.0.fetch_add(-1. / (sim_time * mesh.cross_section_area), Ordering::AcqRel);
+                                } else {
+                                    inj_cell_idx = mesh.n_cells-1;
+                                    let mut pos = mesh.position_inside_cell(&mut rng, inj_cell_idx);
+                                    pos[0] = mesh.x_end - mesh.delta_x()/2.;
+                                    el.pos = pos;
+
+                                    poisson_state.superparticle_flux.1.fetch_add(-1. / (sim_time * mesh.cross_section_area), Ordering::AcqRel);
+                                }
+                                inj_cell_idx
+
+                            }
+                        };
 
                         // Will the time this flight ends at be after until_time
                         if start_time + electron_flight_duration + *remaining_free_flight_duration > until_time {
                             // This flight ends after until_time, perform half the flight and break
                             let flight_time = until_time - (start_time + electron_flight_duration);
+
+                            integrated_velocity_per_cell[cell_idx] += el.velocity()[0] * flight_time;
+                            integrated_time_per_cell[cell_idx] += flight_time;
+
                             el.free_flight(flight_time, &step_info);
                             *remaining_free_flight_duration -= flight_time;
                             break;
                         }
+                        integrated_velocity_per_cell[cell_idx] += el.velocity()[0] * *remaining_free_flight_duration;
+                        integrated_time_per_cell[cell_idx] += *remaining_free_flight_duration;
+
                         // Otherwise we can complete the whole flight
                         el.free_flight(*remaining_free_flight_duration, &step_info);
                         electron_flight_duration += *remaining_free_flight_duration;
@@ -346,69 +380,20 @@ fn monte_carlo_simulator<R: Rng>(
                         total_scattering += 1;
                         *remaining_free_flight_duration = el.free_flight_time(&mut rng, &step_info);
                     }
-                    if !left_bounds {
-                        electrons.push(el);
-                    }
                 }
-
-                // Repopulate electrons that left
-                // Calculate (estimated) drift and thermal velocity on left and right side
-
-                let n_superparticles_left_domain_together = n_superparticles_left_domain.0 + n_superparticles_left_domain.1;
-
-                let mut n_superparticles_entered_domain = (0, 0);
-
-                if n_superparticles_left_domain_together > 0 {
-                    let mean_velocity_left_domain = total_velocity_left_domain / n_superparticles_left_domain_together as f64;
-
-                    let sc_left = &semiconductors[0];
-                    let sc_right = semiconductors.last().unwrap();
-                    let vth_left = (BOLTZMANN * sc_left.temperature / sc_left.valleys[0].effective_mass()).sqrt();
-                    let vth_right = (BOLTZMANN * sc_right.temperature / sc_right.valleys[0].effective_mass()).sqrt();
-
-                    let efield_left = poisson_state.efield[0].load(Ordering::Acquire);
-                    let efield_right = poisson_state.efield.last().unwrap().load(Ordering::Acquire);
-
-                    let ve_left = sc_left.approx_drift_velocity([efield_left, 0., 0.,])[0];
-                    let y0_left = ve_left / vth_left / (2.).sqrt();
-                    rate_left = mesh.cross_section_area * sc_left.impurity_density * vth_left / (2.).sqrt() * (
-                        (-y0_left.powi(2)).exp() + y0_left * y0_left.erf() + y0_left
-                    );
-
-                    let ve_right = -sc_right.approx_drift_velocity([efield_right, 0., 0.,])[0];
-                    let y0_right = ve_right / vth_right / (2.).sqrt();
-                    rate_right = mesh.cross_section_area * sc_right.impurity_density * vth_right / (2.).sqrt() * (
-                        (-y0_right.powi(2)).exp() + y0_right * y0_right.erf() + y0_right
-                    );
-
-                    for _ in 0..n_superparticles_left_domain_together {
-                        let mut el = Electron::thermalized(&mut rng, semiconductors[0].clone(), 0, [0., 0., 0.,], [mean_velocity_left_domain, 0., 0.,]);
-                        if el.k[0] > 0. {
-                            // Moving rightwards, put in the left of the domain
-                            let i = 0;
-                            let mut pos = mesh.position_inside_cell(&mut rng, i);
-                            pos[0] = mesh.x_start + mesh.delta_x()/2.;
-                            el.pos = pos;
-                            n_superparticles_entered_domain.0 += 1;
-                        } else {
-                            // Moving leftwards, put in the right of the domain
-                            let i = mesh.n_cells-1;
-                            let mut pos = mesh.position_inside_cell(&mut rng, i);
-                            pos[0] = mesh.x_end - mesh.delta_x()/2.;
-                            el.pos = pos;
-                            n_superparticles_entered_domain.1 += 1;
-                        }
-                        electrons.push(el);
-                    }
-                }
-
-                n_superparticles_left_domain_total.0 += n_superparticles_left_domain.0;
-                n_superparticles_left_domain_total.1 += n_superparticles_left_domain.1;
-                poisson_state.superparticle_flux.0.fetch_add((n_superparticles_left_domain.0 as f64 - n_superparticles_entered_domain.0 as f64) / (sim_time * mesh.cross_section_area), Ordering::AcqRel);
-                poisson_state.superparticle_flux.1.fetch_add((n_superparticles_left_domain.1 as f64 - n_superparticles_entered_domain.1 as f64) / (sim_time * mesh.cross_section_area), Ordering::AcqRel);
 
                 start_time = until_time;
                 tx_poisson.send(MessageToPoissonThread::SimulatedUntil(until_time)).expect("Couldn't reply to poisson thread!");
+
+                mean_velocity_per_cell = integrated_velocity_per_cell.into_iter().zip(integrated_time_per_cell)
+                    .map(|(intvel, t)| {
+                        if t == 0. {
+                            0.
+                        } else {
+                            intvel / t
+                        }
+                    })
+                    .collect();
             }
             MessageToMCThread::Done => {
                 return electrons;
@@ -633,31 +618,48 @@ const N_SUPERPARTICLES: usize = 10000;
 
 fn main() {
     let mesh = Mesh1D {
-        x_start: units::NM::to_si(-500.),
-        x_end: units::NM::to_si(500.),
+        x_start: units::NM::to_si(-100.),
+        x_end: units::NM::to_si(100.),
         cross_section_area: units::UM2::to_si(0.07),
-        n_cells: 1000,
+        n_cells: 5000,
     };
 
-    let doping_density_1 = units::PER_CM_CUBED::to_si(6.0e15);
-    let doping_density_2 = units::PER_CM_CUBED::to_si(6.0e15);
+    let doping_density_neutral = units::PER_CM_CUBED::to_si(1e18);
 
-    let doping_count_1 = doping_density_1 * mesh.volume_of_cell();
-    let doping_count_2 = doping_density_2 * mesh.volume_of_cell();
+    let doping_density_1 = units::PER_CM_CUBED::to_si(1e18);
+    let region_1_extent = units::NM::to_si(40.);
+
+    let doping_density_2 = units::PER_CM_CUBED::to_si(1e18);
+    let region_2_extent = units::NM::to_si(40.);
+
     let sim_time = units::PS::to_si(50.);
 
-    eprintln!("{doping_count_1:.3} e⁻ per cell in region 1, {:.3} e⁻ total", doping_density_1 * -mesh.x_start * mesh.cross_section_area);
-    eprintln!("{doping_count_2:.3} e⁻ per cell in region 2, {:.3} e⁻ total", doping_density_2 * mesh.x_end * mesh.cross_section_area);
+    let poisson_solving_interval = units::PS::to_si(0.005);
 
-    let semiconductors = (0..mesh.n_cells).map(|i| {
+    let applied_voltage = units::VOLT::to_si(100e-3);
+    let applied_ex = -applied_voltage / mesh.length();
+
+    let doping_count_1 = doping_density_1 * -mesh.x_start * mesh.cross_section_area;
+    let doping_count_2 = doping_density_2 * mesh.x_end * mesh.cross_section_area;
+    eprintln!("{:.2} k e⁻ + , {:.2} k e⁻ = {:.2} k e⁻ total", doping_count_1/1e3, doping_count_2 / 1e3, (doping_count_1 + doping_count_2) / 1e3);
+    eprintln!("Simulating {:.2} k superparticles, ratio {:.2}", N_SUPERPARTICLES as f64 / 1e3, (doping_count_1 + doping_count_2) / N_SUPERPARTICLES as f64);
+
+    let semiconductors: Vec<_> = (0..mesh.n_cells).map(|i| {
         let x = mesh.idx_to_pos(i);
 
         let mut sc = Semiconductor::GaAs(300.);
-        sc.impurity_density = if x < 0. { doping_density_1 } else { doping_density_2 };
+        sc.impurity_density = doping_density_neutral;
+
+        if x <= 0. && x > -region_1_extent {
+            sc.impurity_density = doping_density_1;
+        }
+
+        if x >= 0. && x < region_2_extent {
+            sc.impurity_density = doping_density_2;
+        }
+
         Arc::new(sc)
     }).collect();
-
-    let poisson_solving_interval = units::PS::to_si(0.005);
 
     struct Plots {
         carrier_density: (Plot, UnitPlotter<units::NM, units::ELECTRONS_PER_CM_CUBED>),
@@ -671,7 +673,6 @@ fn main() {
         let carrier_density = UnitPlotter::new("Charge density", "x", r"\rho_v");
         let efield = UnitPlotter::new("E-field", "x", "E_x");
         let voltage = UnitPlotter::new("Voltage", "x", "V");
-
 
         Plots {
             carrier_density: (carrier_density.make_plot(), carrier_density),
@@ -691,9 +692,7 @@ fn main() {
         poisson_solving_interval,
         plots,
     );
-
-    let applied_voltage = units::VOLT::to_si(100e-3);
-    simulator.applied_ex = -applied_voltage / simulator.mesh.length();
+    simulator.applied_ex = applied_ex;
 
     let blah_bar = simulator.barfactory.insert(0, ProgressBar::new_spinner().with_style(ProgressStyle::with_template(FMT_THREAD_SPINNER).unwrap()));
     blah_bar.set_prefix("Plotter");
@@ -709,8 +708,7 @@ fn main() {
 
             let superparticle_conc = sim.poisson_state.cell_n_supercarriers.iter().map(|x| x.load(Ordering::Acquire) / sim.mesh.volume_of_cell());
             let conc_relative = superparticle_conc
-                .zip(&sim.semiconductors)
-                .map(|(s_conc, sc)| ELECTRON_CHARGE * (s_conc * sim.poisson_state.superparticle_factor - sc.impurity_density));
+                .map(|s_conc| ELECTRON_CHARGE * s_conc * sim.poisson_state.superparticle_factor);
 
             let trace = plots.carrier_density.1.make_trace(x, conc_relative)
                 .name(format!("t = {t}"));
@@ -768,7 +766,16 @@ fn main() {
 
     simulator.simulate(sim_time);
 
-    let plots = simulator.callback_state;
+    let mut plots = simulator.callback_state;
+
+    // Plot impurity density to carrier_density
+    let x = (0..simulator.mesh.n_cells)
+        .map(|x| simulator.mesh.idx_to_pos(x));
+    let rho_impurity = simulator.semiconductors.iter().map(|sc| ELECTRON_CHARGE * sc.impurity_density);
+    let trace = plots.carrier_density.1.make_trace(x, rho_impurity)
+        .name("Doping charge").line(Line::new().color("black").dash(plotly::common::DashType::Dash));
+    plots.carrier_density.0.add_trace(trace);
+
 
     let plotter_voltage_over_time = UnitPlotter::<units::PS, units::VOLT>::new("Voltage over time", "t", "V");
     let mut plot_voltage_over_time = plotter_voltage_over_time.make_plot();
@@ -813,22 +820,30 @@ fn main() {
 
     common::write_plots("poisson", "poisson2", [plots.carrier_density.0, plots.efield.0, plots.voltage.0, plot_voltage_over_time, plot_voltage_freq, plot_current_over_time]);
 
-    // Calculate expected values for parameters
+    // Left and right hand side of the semiconductor have the same voltage
     let v_exp = applied_voltage;
 
+    // mobility at n0 = 10^15
+    // from https://www.ioffe.ru/SVA/NSM/Semicond/GaAs/electric.html
     let mobility_linear = 0.85; // m/s / (V/m)
-    let r_exp = 1. / (doping_density_1 * ELECTRON_CHARGE * mobility_linear) * simulator.mesh.length() / simulator.mesh.cross_section_area;
-    let i_exp = v_exp / r_exp;
+
+    let r_region_0 = 1. / (doping_density_neutral * ELECTRON_CHARGE * mobility_linear) * (region_1_extent - simulator.mesh.x_start) / simulator.mesh.cross_section_area;
+    let r_region_1 = 1. / (doping_density_1 * ELECTRON_CHARGE * mobility_linear) * -region_1_extent / simulator.mesh.cross_section_area;
+    let r_region_2 = 1. / (doping_density_2 * ELECTRON_CHARGE * mobility_linear) * region_2_extent / simulator.mesh.cross_section_area;
+    let r_region_3 = 1. / (doping_density_neutral * ELECTRON_CHARGE * mobility_linear) * (simulator.mesh.x_end - region_2_extent) / simulator.mesh.cross_section_area;
+    let r_exp = r_region_0 + r_region_1 + r_region_2 + r_region_3;
+
+
+    let i_exp = applied_voltage / r_exp;
 
     // Integrate johnson noise from f = 0 to f = (1/2pi) kB T / hbar;
     let temp = simulator.semiconductors[0].temperature;
-    let f_stop = 1./(2. * std::f64::consts::PI) * consts::BOLTZMANN * temp / consts::PLANCK_BAR_SI;
-    let johnson_voltage_noise_density = 4. * consts::BOLTZMANN * temp * r_exp;
+    let f_stop = 1./(2. * std::f64::consts::PI) * BOLTZMANN * temp / PLANCK_BAR_SI;
+    let johnson_voltage_noise_density = 4. * BOLTZMANN * temp * r_exp;
     let v_std_exp = (johnson_voltage_noise_density * f_stop).sqrt();
 
-    let johnson_current_noise_density = 4. * consts::BOLTZMANN * temp * 1. / r_exp;
+    let johnson_current_noise_density = 4. * BOLTZMANN * temp * 1. / r_exp;
     let i_std_exp = (johnson_current_noise_density * f_stop).sqrt();
-
 
     // Voltage stats
     let v_mean = plots.voltages_over_time.iter().map(|(_t, v)| v).sum::<f64>() / plots.voltages_over_time.len() as f64;
