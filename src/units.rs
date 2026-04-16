@@ -58,7 +58,7 @@ const EV_TO_J: f64 = 1.602176e-19;
 make_unit!(EV, "eV", "eV", EV_TO_J);
 make_unit!(MEV, "meV", "meV", EV_TO_J * 1e-3);
 
-make_unit!(A_PER_CM2, r"A/cm\(^2\)", "A/cm²", 1e5);
+make_unit!(A_PER_CM2, r"A/cm\(^2\)", "A/cm²", 1e4);
 make_unit!(KV_PER_CM, "kV/cm", "kV/cm", 1e5);
 make_unit!(CM_SQUARED, r"cm\(^2\)", "cm²", 1e-4);
 make_unit!(MILLION_CM_PER_SECOND, r"\(10^6\) cm/s", "10^6 cm/s", 1e4);
