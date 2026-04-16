@@ -67,6 +67,7 @@ make_unit!(CM_SQUARED_PER_VOLT_SECOND, r"cm\(^2\) / V s", "cm² / V s", 1e-4);
 
 make_unit!(PER_CM_CUBED, r"cm\(^{-3}\)", "cm⁻³", 1e6);
 make_unit!(ELECTRONS_PER_CM_CUBED, r"e\(^-\)/cm\(^3\)", "e⁻/cm³", crate::consts::ELECTRON_CHARGE * 1e6);
+make_unit!(ELECTRONS_CHARGES, r"e\(^-\)", "e⁻", crate::consts::ELECTRON_CHARGE);
 
 #[derive(Clone, Copy, Debug)]
 pub struct DBV2PerHz;
