@@ -807,6 +807,7 @@ struct Command {
 enum Sub {
     Sweep(DCSweepArgs),
     Single(SingleArgs),
+    Transient(TransientArgs),
 }
 
 #[derive(Args)]
@@ -822,9 +823,21 @@ struct DCSweepArgs {
 }
 
 #[derive(Args)]
+struct TransientArgs {
+    #[arg(short = 'v', long, allow_negative_numbers(true))]
+    voltage_start: f64,
+
+    #[arg(short = 'V', long, allow_negative_numbers(true))]
+    voltage_stop: f64,
+}
+
+#[derive(Args)]
 struct SingleArgs {
     #[arg(short = 'v', long, allow_negative_numbers(true))]
     voltage: f64,
+
+    #[arg(short = 'V', long, allow_negative_numbers(true))]
+    voltage_stop: Option<f64>,
 }
 
 fn main() {
@@ -834,6 +847,9 @@ fn main() {
         }
         Sub::Single(single_args) => {
             main_single(single_args);
+        }
+        Sub::Transient(transient_args) => {
+            main_transients(transient_args);
         }
     }
 }
@@ -1164,4 +1180,92 @@ fn main_single(args: SingleArgs) {
 
     common::write_plots("poisson", "schottky", [plots.carrier_density.0, plots.efield.0, plots.voltage.0, plot_charge_over_time, plot_voltage_over_time, plot_current_over_time]);
 
+}
+
+fn main_transients(args: TransientArgs) {
+
+    let v1_time = units::PS::to_si(500.0);
+    let v2_time = units::PS::to_si(500.0);
+
+    struct DataPoint {
+        at_time: f64,
+        applied_voltage: f64,
+        measured_voltage: f64,
+        current_left: f64,
+        current_right: f64,
+        charge_left: f64,
+        charge_right: f64,
+    }
+
+    let mut simulator = setup(Vec::new());
+
+    simulator.register_callback(Box::new(move |sim| {
+            if sim.time < v1_time {
+                sim.applied_voltage = args.voltage_start;
+            } else {
+                sim.applied_voltage = args.voltage_stop;
+            }
+            let measured_voltage = sim.poisson_state.voltage.last().unwrap().load(Ordering::SeqCst) - sim.poisson_state.voltage[0].load(Ordering::SeqCst);
+
+            let current_into_left = sim.poisson_state.superparticle_flux_into_left.load(Ordering::SeqCst) * -ELECTRON_CHARGE
+                * sim.poisson_state.superparticle_factor;
+            let current_out_of_left = sim.poisson_state.superparticle_flux_out_of_left.load(Ordering::SeqCst) * -ELECTRON_CHARGE
+                * sim.poisson_state.superparticle_factor;
+            let current_into_right = sim.poisson_state.superparticle_flux_into_right.load(Ordering::SeqCst) * -ELECTRON_CHARGE
+                * sim.poisson_state.superparticle_factor;
+            let current_out_of_right = sim.poisson_state.superparticle_flux_out_of_right.load(Ordering::SeqCst) * -ELECTRON_CHARGE
+                * sim.poisson_state.superparticle_factor;
+
+            let current_left = current_into_left - current_out_of_left;
+            let current_right = current_out_of_right - current_into_right;
+
+            let charge_left = sim.poisson_state.n_supercarriers_at_metal_contact.0.load(Ordering::SeqCst) * sim.poisson_state.superparticle_factor * ELECTRON_CHARGE;
+            let charge_right = sim.poisson_state.n_supercarriers_at_metal_contact.1.load(Ordering::SeqCst) * sim.poisson_state.superparticle_factor * ELECTRON_CHARGE;
+
+            sim.callback_state.push(DataPoint {
+                at_time: sim.time,
+                applied_voltage: sim.applied_voltage,
+                measured_voltage: measured_voltage,
+                current_left,
+                current_right,
+                charge_left,
+                charge_right,
+            });
+        }), units::PS::from_si(0.),
+    );
+
+    simulator.applied_voltage = args.voltage_start;
+    simulator.simulate(v1_time + v2_time);
+
+    let points = simulator.callback_state;
+    simulator.barfactory.println(format!("Got {} data points", points.len())).unwrap();
+
+    // Write the data to a file
+    let mut path = std::path::PathBuf::from("./plots/poisson/");
+    path.push("transient.npz");
+
+    simulator.barfactory.println(format!("Writing to {}", path.display())).unwrap();
+
+    let outfile = std::fs::File::create(path).expect("Could not open output file");
+    let mut writer = npyz::WriteOptions::<f64>::new()
+        .default_dtype()
+        .shape(&[points.len() as u64, 7])
+        .writer(outfile)
+        .begin_nd()
+        .expect("Could not build npz writer");
+
+    for p in points {
+        writer.push(&p.at_time).unwrap();
+
+        writer.push(&p.applied_voltage).unwrap();
+        writer.push(&p.measured_voltage).unwrap();
+
+        writer.push(&p.current_left).unwrap();
+        writer.push(&p.current_right).unwrap();
+
+        writer.push(&p.charge_left).unwrap();
+        writer.push(&p.charge_right).unwrap();
+    }
+    writer.finish().expect("Could not write file");
+    simulator.barfactory.println("Written").unwrap();
 }
