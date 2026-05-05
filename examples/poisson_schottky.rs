@@ -864,6 +864,8 @@ fn main_dc_sweep(args: DCSweepArgs) {
         measured_voltage: f64,
         current_left: f64,
         current_right: f64,
+        charge_left: f64,
+        charge_right: f64,
     }
 
     let mut simulator = setup(Vec::new());
@@ -886,20 +888,25 @@ fn main_dc_sweep(args: DCSweepArgs) {
             let current_left = current_into_left - current_out_of_left;
             let current_right = current_out_of_right - current_into_right;
 
+            let charge_left = sim.poisson_state.n_supercarriers_at_metal_contact.0.load(Ordering::SeqCst) * sim.poisson_state.superparticle_factor * ELECTRON_CHARGE;
+            let charge_right = sim.poisson_state.n_supercarriers_at_metal_contact.1.load(Ordering::SeqCst) * sim.poisson_state.superparticle_factor * ELECTRON_CHARGE;
+
             sim.callback_state.push(DataPoint {
                 at_time: sim.time,
                 applied_voltage: sim.applied_voltage,
                 measured_voltage: measured_voltage,
                 current_left,
                 current_right,
+                charge_left,
+                charge_right,
             });
         }), units::PS::from_si(0.),
     );
 
-    let n = 40;
-    let v_start = units::MILLIVOLT::to_si(-500.);
-    let v_stop = units::MILLIVOLT::to_si(300.);
-    let all_voltages = (0..(n+1)).map(|i| i as f64 / (n as f64) * (v_stop - v_start) + v_start).collect::<Vec<_>>();
+    let n = 25;
+    let v_start = units::MILLIVOLT::to_si(-1000.) - simulator.poisson_state.barrier_height;
+    let v_stop = units::MILLIVOLT::to_si(1000.) - simulator.poisson_state.barrier_height;
+    let all_voltages = (0..n).map(|i| i as f64 / (n as f64) * (v_stop - v_start) + v_start).collect::<Vec<_>>();
 
     let my_start = all_voltages.len() * args.this_computer / args.n_computers;
     let next_start = all_voltages.len() * (args.this_computer + 1) / args.n_computers;
@@ -941,17 +948,22 @@ fn main_dc_sweep(args: DCSweepArgs) {
     let outfile = std::fs::File::create(path).expect("Could not open output file");
     let mut writer = npyz::WriteOptions::<f64>::new()
         .default_dtype()
-        .shape(&[points.len() as u64, 5])
+        .shape(&[points.len() as u64, 7])
         .writer(outfile)
         .begin_nd()
         .expect("Could not build npz writer");
 
     for p in points {
         writer.push(&p.at_time).unwrap();
+
         writer.push(&p.applied_voltage).unwrap();
         writer.push(&p.measured_voltage).unwrap();
+
         writer.push(&p.current_left).unwrap();
         writer.push(&p.current_right).unwrap();
+
+        writer.push(&p.charge_left).unwrap();
+        writer.push(&p.charge_right).unwrap();
     }
     writer.finish().expect("Could not write file");
     simulator.barfactory.println("Written").unwrap();
