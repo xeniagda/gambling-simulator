@@ -761,22 +761,21 @@ fn setup<S>(cmd: Command, callback_state: S) -> Simulator<ChaCha8Rng, S> {
         // x_start: units::NM::to_si(-50.),
         // x_end: units::NM::to_si(500.),
         // fake diode
-        x_start: units::NM::to_si(-2000.),
-        x_end: units::NM::to_si(1000.),
-        cross_section_area: units::UM2::to_si(0.11),
+        x_start: units::NM::to_si(-48.),
+        x_end: units::NM::to_si(250.),
+        cross_section_area: units::UM2::to_si(0.44),
         n_cells: 5000,
     };
 
     // real diode
-    // let doping_density_1 = units::PER_CM_CUBED::to_si(6e17);
-    // let doping_density_2 = units::PER_CM_CUBED::to_si(5e18);
+    let doping_density_1 = units::PER_CM_CUBED::to_si(5e17);
+    let doping_density_2 = units::PER_CM_CUBED::to_si(5e18);
 
     // fake diode
-    let doping_density_1 = units::PER_CM_CUBED::to_si(1e16);
-    let doping_density_2 = units::PER_CM_CUBED::to_si(5e17); // fake ohmic contact
+    // let doping_density_1 = units::PER_CM_CUBED::to_si(1e17);
+    // let doping_density_2 = units::PER_CM_CUBED::to_si(1e18); // fake ohmic contact
 
-    // 200mV barrier sounds about right
-    let barrier_height: f64 = units::MILLIVOLT::to_si(200.);
+    let barrier_height: f64 = units::MILLIVOLT::to_si(750.);
 
     let poisson_solving_interval = units::PS::to_si(0.005);
 
@@ -919,9 +918,9 @@ fn main_dc_sweep(cmd: Command, args: DCSweepArgs) {
         }), units::PS::from_si(0.),
     );
 
-    let n = 25;
-    let v_start = units::MILLIVOLT::to_si(-1000.) - simulator.poisson_state.barrier_height;
-    let v_stop = units::MILLIVOLT::to_si(1000.) - simulator.poisson_state.barrier_height;
+    let n = 40;
+    let v_start = units::MILLIVOLT::to_si(400.) - simulator.poisson_state.barrier_height;
+    let v_stop = units::MILLIVOLT::to_si(1200.) - simulator.poisson_state.barrier_height;
     let all_voltages = (0..n).map(|i| i as f64 / (n as f64) * (v_stop - v_start) + v_start).collect::<Vec<_>>();
 
     let my_start = all_voltages.len() * args.this_computer / args.n_computers;
