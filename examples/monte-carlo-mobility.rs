@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use gambling_simulator::{semiconductor::{Electron, Semiconductor, StepInfo}, units::{self, Unit}};
+use gambling_simulator::consts::{BOLTZMANN, ELECTRON_CHARGE};
 use gambling_simulator::histogram::{generate_histogram_collection_struct, Histogram, Binner, Binner2D, UnitBinner, DiscreteBinner};
 
 use plotly::{common::{DashType, Line, Mode}, layout::Axis, Layout, Plot, Scatter};
@@ -16,7 +17,8 @@ use crate::common::write_plots;
 generate_histogram_collection_struct! {
     struct Histograms {
         velocity: Histogram<Binner2D<UnitBinner<units::KV_PER_CM>, UnitBinner<units::MILLION_CM_PER_SECOND>>>,
-        position: Histogram<Binner2D<UnitBinner<units::KV_PER_CM>, Binner2D<UnitBinner<units::PS>, UnitBinner<units::NM>>>>,
+        position_x: Histogram<Binner2D<UnitBinner<units::KV_PER_CM>, Binner2D<UnitBinner<units::PS>, UnitBinner<units::NM>>>>,
+        position_z: Histogram<Binner2D<UnitBinner<units::KV_PER_CM>, Binner2D<UnitBinner<units::PS>, UnitBinner<units::NM>>>>,
         energy: Histogram<Binner2D<UnitBinner<units::KV_PER_CM>, UnitBinner<units::MEV>>>,
         mechanism: Histogram<Binner2D<UnitBinner<units::KV_PER_CM>, DiscreteBinner<&'static str>>>,
         valley: Histogram<Binner2D<UnitBinner<units::KV_PER_CM>, DiscreteBinner<&'static str>>>,
@@ -59,7 +61,8 @@ fn generate_histogram<R: Rng + SeedableRng>(
                     histo.velocity.add((efield, vx_now), dt);
                     histo.energy.add((efield, electron.energy()), dt);
 
-                    histo.position.add((efield, (t, electron.pos[0])), dt);
+                    histo.position_x.add((efield, (t, electron.pos[0])), dt);
+                    histo.position_z.add((efield, (t, electron.pos[2])), dt);
 
                     histo.valley.add((efield, electron.valley().name), dt);
                     if let Some(mech) = scatter_mech {
@@ -85,7 +88,7 @@ fn main() {
 
     let binner_time = UnitBinner::<units::PS>::new(
         "t",
-        10., 20., 10,
+        10., 30., 10,
     );
 
     let binner_position = UnitBinner::<units::NM>::new(
@@ -156,13 +159,14 @@ fn main() {
         }
     );
 
-    let n_electrons = 30;
+    let n_electrons = 300;
     let n_threads = num_cpus::get();
 
     let histo: Histograms = std::thread::scope(|scope| {
         let mut histo = Histograms {
             velocity: velocity_histo,
-            position: position_over_time_histo,
+            position_x: position_over_time_histo.clone(),
+            position_z: position_over_time_histo,
             energy: energy_histo,
             mechanism: mechanism_histo,
             valley: valley_histo,
@@ -357,21 +361,53 @@ fn main() {
         let mut plot_diffusion = Plot::new();
 
         let diffusion_points = binner_field.steps().map(|field| {
-            let histo = histo.position.as_ref_at_major(field).unwrap();
-            let diffusions = binner_time.steps().map(|t| {
-                let histo = histo.at_major(t).unwrap();
+            let histo_x = histo.position_x.as_ref_at_major(field).unwrap();
+            let diffusions_x = binner_time.steps().map(|t| {
+                let histo = histo_x.at_major(t).unwrap();
                 let var = histo.stddev().powi(2);
-                units::CM_SQUARED_PER_SECOND::from_si(0.5 * var / t)
+                0.5 * var / t
             });
-            diffusions.sum::<f64>() / binner_time.count as f64
+            let mean_diffusion_x = diffusions_x.sum::<f64>() / binner_time.count as f64;
+
+            let histo_z = histo.position_z.as_ref_at_major(field).unwrap();
+            let diffusions_z = binner_time.steps().map(|t| {
+                let histo = histo_z.at_major(t).unwrap();
+                let var = histo.stddev().powi(2);
+                0.5 * var / t
+            });
+            let mean_diffusion_z = diffusions_z.sum::<f64>() / binner_time.count as f64;
+
+            let v_model = sample_sc.approx_drift_velocity([field, 0., 0.,])[0];
+            let mobility_model = v_model / -field;
+            let diffusion_model = BOLTZMANN * sample_sc.temperature / ELECTRON_CHARGE * mobility_model;
+
+            (mean_diffusion_x, mean_diffusion_z, diffusion_model)
         }).collect::<Vec<_>>();
 
         let trace = Scatter::new(
                 binner_field.steps().map(|x| units::KV_PER_CM::from_si(x)).collect(),
-                diffusion_points,
+                diffusion_points.iter().map(|(mean_x, _mean_z, _model)| units::CM_SQUARED_PER_SECOND::from_si(*mean_x)).collect(),
             )
+            .name("Simulated, longitudunal")
             .mode(Mode::Lines);
+        plot_diffusion.add_trace(trace);
 
+        let trace = Scatter::new(
+                binner_field.steps().map(|x| units::KV_PER_CM::from_si(x)).collect(),
+                diffusion_points.iter().map(|(_mean_x, mean_z, _model)| units::CM_SQUARED_PER_SECOND::from_si(*mean_z)).collect(),
+            )
+            .name("Simulated, transversal")
+            .line(Line::new().color("green"))
+            .mode(Mode::Lines);
+        plot_diffusion.add_trace(trace);
+
+        let trace = Scatter::new(
+                binner_field.steps().map(|x| units::KV_PER_CM::from_si(x)).collect(),
+                diffusion_points.iter().map(|(_mean_x, _mean_z, model)| units::CM_SQUARED_PER_SECOND::from_si(*model)).collect(),
+            )
+            .name("As predicted by Einstein relation")
+            .mode(Mode::Lines)
+            .line(Line::new().color("orange").dash(DashType::Dot));
         plot_diffusion.add_trace(trace);
 
         plot_diffusion.set_layout(
@@ -434,7 +470,7 @@ fn main() {
 
             let trace = Scatter::new(
                     histo_valley.all_values().map(|(field, _count)| binner_field.from_si(field)).collect(),
-                    histo_valley.all_values().zip(total_at_field.iter()).map(|((_field, count), total)| count / total).collect(),
+                    histo_valley.all_values().zip(total_at_field.iter()).map(|((_field, count), total)| 100. * count / total).collect(),
                 )
                 .mode(Mode::Lines)
                 .name(valley_name);
@@ -449,7 +485,7 @@ fn main() {
                     Axis::new().title("$E_x [kV/cm]$")
                 )
                 .y_axis(
-                    Axis::new().title(r"Count, rel, log10")
+                    Axis::new().title(r"Count [%]")
                 )
         );
 
