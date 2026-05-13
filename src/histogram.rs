@@ -232,6 +232,7 @@ impl<Major: Binner, Minor: Binner> Binner for Binner2D<Major, Minor> {
     }
 }
 
+#[derive(Clone)]
 pub struct Histogram<B: Binner> {
     pub name: Arc<str>,
     pub binner: B,
