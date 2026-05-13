@@ -5,7 +5,7 @@ use std::sync::Arc;
 use gambling_simulator::{semiconductor::{Electron, Semiconductor, StepInfo}};
 use gambling_simulator::units::{Unit, EV, MEV, KV_PER_CM};
 
-use plotly::{common::{Marker, MarkerSymbol, Mode}, layout::Axis, Layout, Plot, Scatter};
+use plotly::{Layout, Plot, Scatter, common::{Line, Marker, MarkerSymbol, Mode}, layout::Axis};
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 mod common;
@@ -36,11 +36,12 @@ fn main() {
     };
 
     let mut next_point_t = 0.;
-    let points_every = 0.05e-12;
+    let points_every = 0.02e-12;
     let mut time = 0.;
 
     let mut total_velocity_x = 0.;
 
+    let mut xyz_before = [0., 0., 0.,];
     for step in 0..2000 {
         let el_before = electron.clone();
 
@@ -65,21 +66,6 @@ fn main() {
         let a = flight_info.x_acceleration;
 
         let color = VALLEY_COLORS[electron.valley_idx];
-        // let intermediate_positions = dts
-        //     .map(|dt| [
-        //         el_before.pos[0] + v[0] * dt + a[0] * dt.powi(2) / 2.,
-        //         el_before.pos[1] + v[1] * dt + a[1] * dt.powi(2) / 2.,
-        //         el_before.pos[2] + v[2] * dt + a[2] * dt.powi(2) / 2.,
-        //     ])
-        //     .collect::<Vec<_>>();
-        // let trace = Scatter::new(
-        //         intermediate_positions.iter().map(|pos| pos[0] / sample_sc.lattice_constant).collect(),
-        //         intermediate_positions.iter().map(|pos| pos[1] / sample_sc.lattice_constant).collect(),
-        //     )
-        //     .mode(Mode::Lines)
-        //     .line(Line::new().color(color))
-        //     .name(format!("#{step} flight (in {}, E = {:.3} meV at start, t = {:.4} ps)", electron.valley().name, electron.energy_eV() * 1e3, res.free_flight_time*1e12));
-        // plot_traces.add_trace(trace);
         while next_point_t < time {
             let dt = next_point_t - (time - dt);
             let xyz = [
@@ -87,16 +73,26 @@ fn main() {
                 el_before.pos[1] + v[1] * dt + a[1] * dt.powi(2) / 2.,
                 el_before.pos[2] + v[2] * dt + a[2] * dt.powi(2) / 2.,
             ];
-            let trace = Scatter::new(
+            let point = Scatter::new(
                     vec![xyz[0] / sample_sc.lattice_constant],
                     vec![xyz[1] / sample_sc.lattice_constant],
                 )
                 .mode(Mode::Markers)
                 .name(format!("t={:.4} ps", next_point_t*1e12))
-                .marker(Marker::new().color(color).size(4));
-            plot_traces.add_trace(trace);
+                .marker(Marker::new().color(color).size(5));
+            plot_traces.add_trace(point);
+
+            let line = Scatter::new(
+                    vec![xyz_before[0] / sample_sc.lattice_constant, xyz[0] / sample_sc.lattice_constant],
+                    vec![xyz_before[1] / sample_sc.lattice_constant, xyz[1] / sample_sc.lattice_constant],
+                )
+                .mode(Mode::Lines)
+                .name(format!("t={:.4} ps", next_point_t*1e12))
+                .line(Line::new().color(color));
+            plot_traces.add_trace(line);
 
             next_point_t += points_every;
+            xyz_before = xyz;
         }
 
         if let Some(mech) = electron.scatter(&step_info, &mut rng) {
@@ -112,9 +108,21 @@ fn main() {
                     vec![electron.pos[1] / sample_sc.lattice_constant],
                 )
                 .mode(Mode::Markers)
-                .marker(Marker::new().color("red").symbol(MarkerSymbol::X))
+                .marker(Marker::new().color("red").symbol(MarkerSymbol::X).size(8))
                 .name(format!("{} ({:.4} meV before)", mech.name_short, MEV::from_si(el_before.energy())));
             plot_traces.add_trace(scatter);
+
+            let xyz = electron.pos;
+            let line = Scatter::new(
+                    vec![xyz_before[0] / sample_sc.lattice_constant, xyz[0] / sample_sc.lattice_constant],
+                    vec![xyz_before[1] / sample_sc.lattice_constant, xyz[1] / sample_sc.lattice_constant],
+                )
+                .mode(Mode::Lines)
+                .name(format!("t={:.4} ps", next_point_t*1e12))
+                .line(Line::new().color(color));
+            plot_traces.add_trace(line);
+
+            xyz_before = electron.pos;
         }
     }
 
