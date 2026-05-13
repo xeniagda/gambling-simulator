@@ -222,6 +222,7 @@ struct Simulator<R: Rng + SeedableRng + Send, S> {
     applied_voltage: f64,
 
     barfactory: MultiProgress,
+    n_cores: usize,
 
 }
 
@@ -502,6 +503,7 @@ impl<R: Rng + SeedableRng + Send, S> Simulator<R, S> {
         poisson_solving_interval: f64,
         callback_state: S,
         barrier_height: f64,
+        n_cores: usize,
     ) -> Self {
         let total_physical_electrons: f64 = semiconductors.iter().map(|x| x.impurity_density * mesh.volume_of_cell()).sum();
         let superparticle_factor = total_physical_electrons / n_superparticles as f64;
@@ -548,6 +550,7 @@ impl<R: Rng + SeedableRng + Send, S> Simulator<R, S> {
             callbacks: Vec::new(),
             barfactory,
             callback_state,
+            n_cores,
         }
     }
 
@@ -568,14 +571,13 @@ impl<R: Rng + SeedableRng + Send, S> Simulator<R, S> {
         let mut wall_time_spent_synchronizing = 0.;
 
         // This main thread is the poisson solving thread. We start off by creating a number of threads for simulating each particle
-        let n_threads = 48;//num_cpus::get();
-        Arc::get_mut(&mut self.poisson_state).unwrap().n_threads = n_threads;
+        Arc::get_mut(&mut self.poisson_state).unwrap().n_threads = self.n_cores;
 
         // Send each electron to one thread
         let thread_electrons = {
-            let mut thread_electrons: Vec<Vec<Electron>> = std::iter::repeat_with(|| Vec::new()).take(n_threads).collect();
+            let mut thread_electrons: Vec<Vec<Electron>> = std::iter::repeat_with(|| Vec::new()).take(self.n_cores).collect();
             for (i, e) in self.electrons.drain(..).enumerate() {
-                thread_electrons[i % n_threads].push(e);
+                thread_electrons[i % self.n_cores].push(e);
             }
             thread_electrons
         };
@@ -753,7 +755,7 @@ impl<R: Rng + SeedableRng + Send, S> Simulator<R, S> {
 
 const N_SUPERPARTICLES: usize = 10000;
 
-fn setup<S>(callback_state: S) -> Simulator<ChaCha8Rng, S> {
+fn setup<S>(cmd: Command, callback_state: S) -> Simulator<ChaCha8Rng, S> {
     let mesh = Mesh1D {
         // real diode
         // x_start: units::NM::to_si(-50.),
@@ -800,6 +802,7 @@ fn setup<S>(callback_state: S) -> Simulator<ChaCha8Rng, S> {
         poisson_solving_interval,
         callback_state,
         barrier_height,
+        cmd.n_cores.unwrap_or(num_cpus::get() - 1),
     )
 }
 
@@ -807,16 +810,21 @@ fn setup<S>(callback_state: S) -> Simulator<ChaCha8Rng, S> {
 struct Command {
     #[command(subcommand)]
     command: Sub,
+
+    #[arg(short = 'c', long, default_value = None)]
+    /// Number of threads for monte-carlo solvers
+    /// Defaults to number of cpus minus one (to keep one for poisson solving)
+    n_cores: Option<usize>,
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Clone)]
 enum Sub {
     Sweep(DCSweepArgs),
     Single(SingleArgs),
     Transient(TransientArgs),
 }
 
-#[derive(Args)]
+#[derive(Args, Clone)]
 struct DCSweepArgs {
     #[arg(short = 'N', long, default_value_t = 1)]
     n_computers: usize,
@@ -826,9 +834,12 @@ struct DCSweepArgs {
 
     #[arg(short = 'o', long)]
     output_folder_name: Option<String>,
+
+    #[arg(short = 'f', long)]
+    output_full: bool,
 }
 
-#[derive(Args)]
+#[derive(Args, Clone)]
 struct TransientArgs {
     #[arg(short = 'v', long, allow_negative_numbers(true))]
     voltage_start: f64,
@@ -837,7 +848,7 @@ struct TransientArgs {
     voltage_stop: f64,
 }
 
-#[derive(Args)]
+#[derive(Args, Clone)]
 struct SingleArgs {
     #[arg(short = 'v', long, allow_negative_numbers(true))]
     voltage: f64,
@@ -847,12 +858,13 @@ struct SingleArgs {
 }
 
 fn main() {
-    match Command::parse().command {
+    let cmd = Command::parse();
+    match cmd.command.clone() {
         Sub::Sweep(dcsweep_args) => {
-            main_dc_sweep(dcsweep_args);
+            main_dc_sweep(cmd, dcsweep_args);
         }
         Sub::Single(single_args) => {
-            main_single(single_args);
+            main_single(cmd, single_args);
         }
         Sub::Transient(transient_args) => {
             main_transients(transient_args);
@@ -860,8 +872,8 @@ fn main() {
     }
 }
 
-fn main_dc_sweep(args: DCSweepArgs) {
-    let sim_time = units::PS::to_si(400.1);
+fn main_dc_sweep(cmd: Command, args: DCSweepArgs) {
+    let sim_time = units::PS::to_si(500.1);
     let sim_time_record_start = units::PS::to_si(40.);
 
     struct DataPoint {
@@ -877,7 +889,7 @@ fn main_dc_sweep(args: DCSweepArgs) {
         charge_right: f64,
     }
 
-    let mut simulator = setup(Vec::new());
+    let mut simulator = setup(cmd, Vec::new());
 
     simulator.register_callback(Box::new(move |sim| {
             if sim.time < sim_time_record_start {
@@ -1070,7 +1082,7 @@ fn main_dc_sweep(args: DCSweepArgs) {
 }
 
 #[allow(unused)]
-fn main_single(args: SingleArgs) {
+fn main_single(cmd: Command, args: SingleArgs) {
     let sim_time = units::PS::to_si(50.1);
 
     let applied_voltage = units::VOLT::to_si(args.voltage);
@@ -1100,7 +1112,7 @@ fn main_single(args: SingleArgs) {
         }
     };
 
-    let mut simulator = setup(plots);
+    let mut simulator = setup(cmd, plots);
     simulator.applied_voltage = applied_voltage;
 
     let blah_bar = simulator.barfactory.insert(0, ProgressBar::new_spinner().with_style(ProgressStyle::with_template(FMT_THREAD_SPINNER).unwrap()));
