@@ -113,6 +113,15 @@ impl Mesh1D {
     }
 }
 
+// Amount of carriers moving through the barriers of the system
+// Positive direction is defined as going from left to right (or from right back to left through the metal)
+#[derive(Default)]
+struct SuperparticleFlux {
+    left: AtomicF64,
+    right: AtomicF64,
+    metal: AtomicF64,
+}
+
 struct PoissonState {
     // Written to by MC threads, read by poisson thread
     // Cleared by poisson thread before each MC step
@@ -135,13 +144,8 @@ struct PoissonState {
     // Indices correspond to whole-grid cells (length = mesh.n_cells)
     voltage: Vec<AtomicF64>,
 
-
-    // Cleared by poisson thread, added to by MC thread
-    // Represents flux OUT of area, number per second
-    superparticle_flux_into_left: AtomicF64,
-    superparticle_flux_out_of_left: AtomicF64,
-    superparticle_flux_into_right: AtomicF64,
-    superparticle_flux_out_of_right: AtomicF64,
+    // Superparticle fluxes moving from left to right
+    superparticle_flux: SuperparticleFlux,
 
     // How many q_0 does each simulated electron represent?
     n_threads: usize,
@@ -158,10 +162,11 @@ impl PoissonState {
             efield: std::iter::repeat_with(|| AtomicF64::new(0.)).take(n_cells-1).collect(),
             voltage: std::iter::repeat_with(|| AtomicF64::new(0.)).take(n_cells).collect(),
             superparticle_factor, total_superparticles,
-            superparticle_flux_into_left: AtomicF64::new(0.),
-            superparticle_flux_out_of_left: AtomicF64::new(0.),
-            superparticle_flux_into_right: AtomicF64::new(0.),
-            superparticle_flux_out_of_right: AtomicF64::new(0.),
+            superparticle_flux: SuperparticleFlux {
+                left: AtomicF64::new(0.),
+                right: AtomicF64::new(0.),
+                metal: AtomicF64::new(0.),
+            },
             n_threads,
         }
     }
@@ -175,11 +180,9 @@ impl PoissonState {
         for v in &self.voltage {
             v.store(0., Ordering::SeqCst);
         }
-
-        self.superparticle_flux_into_left.store(0., Ordering::SeqCst);
-        self.superparticle_flux_out_of_left.store(0., Ordering::SeqCst);
-        self.superparticle_flux_into_right.store(0., Ordering::SeqCst);
-        self.superparticle_flux_out_of_right.store(0., Ordering::SeqCst);
+        self.superparticle_flux.left.store(0., Ordering::SeqCst);
+        self.superparticle_flux.right.store(0., Ordering::SeqCst);
+        self.superparticle_flux.metal.store(0., Ordering::SeqCst);
     }
 }
 
@@ -350,7 +353,8 @@ fn monte_carlo_simulator<R: Rng>(
                                 // Electron reached schottky contact and gets absorbed
                                 electron_got_absorbed = true;
 
-                                poisson_state.superparticle_flux_out_of_left.fetch_add(1. / sim_time, Ordering::SeqCst);
+                                // Carrier goes to the left
+                                poisson_state.superparticle_flux.left.fetch_sub(1. / sim_time, Ordering::SeqCst);
                                 poisson_state.n_supercarriers_at_metal_contact.0.fetch_add(1., Ordering::SeqCst);
 
                                 break;
@@ -360,8 +364,8 @@ fn monte_carlo_simulator<R: Rng>(
 
                                 electron_got_absorbed = true;
                                 // Charge ends up at the metal contact
-
-                                poisson_state.superparticle_flux_out_of_right.fetch_add(1. / sim_time, Ordering::SeqCst);
+                                // Carrier goes to the right
+                                poisson_state.superparticle_flux.right.fetch_add(1. / sim_time, Ordering::SeqCst);
                                 poisson_state.n_supercarriers_at_metal_contact.1.fetch_add(1., Ordering::SeqCst);
                                 break;
                             }
@@ -434,7 +438,8 @@ fn monte_carlo_simulator<R: Rng>(
                         remaining_free_flight_durations.push(free_flight_time);
                     }
                     // bookkeep the injected particles
-                    poisson_state.superparticle_flux_into_right.fetch_add(n_to_inject as f64 / sim_time, Ordering::SeqCst);
+                    // Carrier goes to the left
+                    poisson_state.superparticle_flux.right.fetch_sub(n_to_inject as f64 / sim_time, Ordering::SeqCst);
                     poisson_state.n_supercarriers_at_metal_contact.0.fetch_sub(n_to_inject as f64, Ordering::SeqCst);
                 }
 
@@ -460,7 +465,8 @@ fn monte_carlo_simulator<R: Rng>(
                     remaining_free_flight_durations.push(free_flight_time);
                 }
                 // bookkeep the injected particles
-                poisson_state.superparticle_flux_into_left.fetch_add(n_to_inject as f64 / sim_time, Ordering::SeqCst);
+                // Carrier goes to the right
+                poisson_state.superparticle_flux.left.fetch_add(n_to_inject as f64 / sim_time, Ordering::SeqCst);
                 poisson_state.n_supercarriers_at_metal_contact.1.fetch_sub(n_to_inject as f64, Ordering::SeqCst);
 
                 start_time = until_time;
@@ -862,8 +868,11 @@ fn main_dc_sweep(args: DCSweepArgs) {
         at_time: f64,
         applied_voltage: f64,
         measured_voltage: f64,
+
         current_left: f64,
         current_right: f64,
+        current_metal: f64,
+
         charge_left: f64,
         charge_right: f64,
     }
@@ -876,17 +885,9 @@ fn main_dc_sweep(args: DCSweepArgs) {
             }
             let measured_voltage = sim.poisson_state.voltage.last().unwrap().load(Ordering::SeqCst) - sim.poisson_state.voltage[0].load(Ordering::SeqCst);
 
-            let current_into_left = sim.poisson_state.superparticle_flux_into_left.load(Ordering::SeqCst) * -ELECTRON_CHARGE
-                * sim.poisson_state.superparticle_factor;
-            let current_out_of_left = sim.poisson_state.superparticle_flux_out_of_left.load(Ordering::SeqCst) * -ELECTRON_CHARGE
-                * sim.poisson_state.superparticle_factor;
-            let current_into_right = sim.poisson_state.superparticle_flux_into_right.load(Ordering::SeqCst) * -ELECTRON_CHARGE
-                * sim.poisson_state.superparticle_factor;
-            let current_out_of_right = sim.poisson_state.superparticle_flux_out_of_right.load(Ordering::SeqCst) * -ELECTRON_CHARGE
-                * sim.poisson_state.superparticle_factor;
-
-            let current_left = current_into_left - current_out_of_left;
-            let current_right = current_out_of_right - current_into_right;
+            let current_left = sim.poisson_state.superparticle_flux.left.load(Ordering::SeqCst) * sim.poisson_state.superparticle_factor * -ELECTRON_CHARGE;
+            let current_right = sim.poisson_state.superparticle_flux.right.load(Ordering::SeqCst) * sim.poisson_state.superparticle_factor * -ELECTRON_CHARGE;
+            let current_metal = sim.poisson_state.superparticle_flux.metal.load(Ordering::SeqCst) * sim.poisson_state.superparticle_factor * -ELECTRON_CHARGE;
 
             let charge_left = sim.poisson_state.n_supercarriers_at_metal_contact.0.load(Ordering::SeqCst) * sim.poisson_state.superparticle_factor * ELECTRON_CHARGE;
             let charge_right = sim.poisson_state.n_supercarriers_at_metal_contact.1.load(Ordering::SeqCst) * sim.poisson_state.superparticle_factor * ELECTRON_CHARGE;
@@ -895,8 +896,11 @@ fn main_dc_sweep(args: DCSweepArgs) {
                 at_time: sim.time,
                 applied_voltage: sim.applied_voltage,
                 measured_voltage: measured_voltage,
+
                 current_left,
                 current_right,
+                current_metal,
+
                 charge_left,
                 charge_right,
             });
@@ -941,31 +945,127 @@ fn main_dc_sweep(args: DCSweepArgs) {
     if let Some(f) = args.output_folder_name {
         path.push(f);
     }
-    path.push(format!("voltage_sweep-{}-of-{}.npz", args.this_computer, args.n_computers));
+
+    if args.output_full {
+        path.push(format!("voltage_sweep-full-{}-of-{}.npz", args.this_computer, args.n_computers));
+    } else {
+        path.push(format!("voltage_sweep-avg-{}-of-{}.npz", args.this_computer, args.n_computers));
+    }
 
     simulator.barfactory.println(format!("Writing to {}", path.display())).unwrap();
 
     let outfile = std::fs::File::create(path).expect("Could not open output file");
-    let mut writer = npyz::WriteOptions::<f64>::new()
-        .default_dtype()
-        .shape(&[points.len() as u64, 7])
-        .writer(outfile)
-        .begin_nd()
-        .expect("Could not build npz writer");
 
-    for p in points {
-        writer.push(&p.at_time).unwrap();
+    if args.output_full {
+        let mut writer = npyz::WriteOptions::<f64>::new()
+            .default_dtype()
+            .shape(&[points.len() as u64, 8])
+            .writer(outfile)
+            .begin_nd()
+            .expect("Could not build npz writer");
+        for p in points {
+            writer.push(&p.at_time).unwrap();
 
-        writer.push(&p.applied_voltage).unwrap();
-        writer.push(&p.measured_voltage).unwrap();
+            writer.push(&p.applied_voltage).unwrap();
+            writer.push(&p.measured_voltage).unwrap();
 
-        writer.push(&p.current_left).unwrap();
-        writer.push(&p.current_right).unwrap();
+            writer.push(&p.current_left).unwrap();
+            writer.push(&p.current_right).unwrap();
+            writer.push(&p.current_metal).unwrap();
 
-        writer.push(&p.charge_left).unwrap();
-        writer.push(&p.charge_right).unwrap();
+            writer.push(&p.charge_left).unwrap();
+            writer.push(&p.charge_right).unwrap();
+        }
+        writer.finish().expect("Could not write file");
+    } else {
+        let mut writer = npyz::WriteOptions::<f64>::new()
+            .default_dtype()
+            .shape(&[voltages.len() as u64, 2, 7])
+            .writer(outfile)
+            .begin_nd()
+            .expect("Could not build npz writer");
+        // Match up the voltages
+        for &v in voltages {
+            let mut p_total = DataPoint {
+                at_time: 0.,
+                applied_voltage: v,
+                measured_voltage: 0.,
+                current_left: 0.,
+                current_right: 0.,
+                current_metal: 0.,
+                charge_left: 0.,
+                charge_right: 0.,
+            };
+            let mut n_points = 0.;
+            for p in &points {
+                if p.applied_voltage != v {
+                    continue;
+                }
+                n_points += 1.;
+
+                p_total.measured_voltage += p.measured_voltage;
+                p_total.current_left += p.current_left;
+                p_total.current_right += p.current_right;
+                p_total.current_metal += p.current_metal;
+                p_total.charge_left += p.charge_left;
+                p_total.charge_right += p.charge_right;
+            }
+            p_total.measured_voltage /= n_points;
+            p_total.current_left /= n_points;
+            p_total.current_right /= n_points;
+            p_total.current_metal /= n_points;
+            p_total.charge_left /= n_points;
+            p_total.charge_right /= n_points;
+            let p_mean = p_total;
+
+            writer.push(&n_points).unwrap();
+            writer.push(&v).unwrap();
+            writer.push(&p_mean.current_left).unwrap();
+            writer.push(&p_mean.current_right).unwrap();
+            writer.push(&p_mean.current_metal).unwrap();
+            writer.push(&p_mean.charge_left).unwrap();
+            writer.push(&p_mean.charge_right).unwrap();
+
+            let mut p_var = DataPoint {
+                at_time: 0.,
+                applied_voltage: v,
+                measured_voltage: 0.,
+                current_left: 0.,
+                current_right: 0.,
+                current_metal: 0.,
+                charge_left: 0.,
+                charge_right: 0.,
+            };
+
+            for p in &points {
+                if p.applied_voltage != v {
+                    continue;
+                }
+                p_var.measured_voltage += (p.measured_voltage - p_mean.measured_voltage).powi(2);
+                p_var.current_left += (p.current_left - p_mean.current_left).powi(2);
+                p_var.current_right += (p.current_right - p_mean.current_right).powi(2);
+                p_var.current_metal += (p.current_metal - p_mean.current_metal).powi(2);
+                p_var.charge_left += (p.charge_left - p_mean.charge_left).powi(2);
+                p_var.charge_right += (p.charge_right - p_mean.charge_right).powi(2);
+            }
+            p_var.measured_voltage /= n_points;
+            p_var.current_left /= n_points;
+            p_var.current_right /= n_points;
+            p_var.current_metal /= n_points;
+            p_var.charge_left /= n_points;
+            p_var.charge_right /= n_points;
+
+            writer.push(&n_points).unwrap();
+            writer.push(&v).unwrap();
+            writer.push(&p_var.current_left).unwrap();
+            writer.push(&p_var.current_right).unwrap();
+            writer.push(&p_var.current_metal).unwrap();
+            writer.push(&p_var.charge_left).unwrap();
+            writer.push(&p_var.charge_right).unwrap();
+        }
+        writer.finish().expect("Could not write file");
     }
-    writer.finish().expect("Could not write file");
+
     simulator.barfactory.println("Written").unwrap();
 }
 
@@ -981,7 +1081,7 @@ fn main_single(args: SingleArgs) {
         voltage: (Plot, UnitPlotter<units::NM, units::VOLT>),
 
         voltages_over_time: Vec<(f64, f64)>,
-        current_density_over_time: Vec<(f64, f64, f64, f64, f64)>, // time, into left side, out of left side, into right side, out of right side
+        current_density_over_time: Vec<(f64, f64, f64, f64)>, // time, left, right, metal
 
         total_charge_over_time: Vec<(f64, f64, f64, f64)>, // time, volume charge, surface charge left, surface contact right
     }
@@ -1046,10 +1146,9 @@ fn main_single(args: SingleArgs) {
 
     // Exponential averaging
     let decay_per_time: f64 = 5. / units::PS::to_si(1.);
-    let mut last_current_density_into_left = 0.;
-    let mut last_current_density_out_of_left = 0.;
-    let mut last_current_density_into_right = 0.;
-    let mut last_current_density_out_of_right = 0.;
+    let mut last_current_density_left = 0.;
+    let mut last_current_density_right = 0.;
+    let mut last_current_density_metal = 0.;
 
     simulator.register_callback(
         Box::new(move |sim| {
@@ -1066,23 +1165,17 @@ fn main_single(args: SingleArgs) {
             let junction_voltage = v.last().unwrap() - v.first().unwrap();
             plots.voltages_over_time.push((sim.time, junction_voltage));
 
-            let current_density_into_left = sim.poisson_state.superparticle_flux_into_left.load(Ordering::SeqCst) * -ELECTRON_CHARGE
-                * sim.poisson_state.superparticle_factor / sim.mesh.cross_section_area;
-            let current_density_out_of_left = sim.poisson_state.superparticle_flux_out_of_left.load(Ordering::SeqCst) * -ELECTRON_CHARGE
-                * sim.poisson_state.superparticle_factor / sim.mesh.cross_section_area;
-            let current_density_into_right = sim.poisson_state.superparticle_flux_into_right.load(Ordering::SeqCst) * -ELECTRON_CHARGE
-                * sim.poisson_state.superparticle_factor / sim.mesh.cross_section_area;
-            let current_density_out_of_right = sim.poisson_state.superparticle_flux_out_of_right.load(Ordering::SeqCst) * -ELECTRON_CHARGE
-                * sim.poisson_state.superparticle_factor / sim.mesh.cross_section_area;
+            let current_density_left = sim.poisson_state.superparticle_flux.left.load(Ordering::SeqCst) * sim.poisson_state.superparticle_factor * -ELECTRON_CHARGE / sim.mesh.cross_section_area;
+            let current_density_right = sim.poisson_state.superparticle_flux.right.load(Ordering::SeqCst) * sim.poisson_state.superparticle_factor * -ELECTRON_CHARGE / sim.mesh.cross_section_area;
+            let current_density_metal = sim.poisson_state.superparticle_flux.metal.load(Ordering::SeqCst) * sim.poisson_state.superparticle_factor * -ELECTRON_CHARGE / sim.mesh.cross_section_area;
 
             let alpha = (-sim.poisson_solving_interval * decay_per_time).exp();
 
-            last_current_density_into_left    = last_current_density_into_left    * alpha + (1. - alpha) * current_density_into_left;
-            last_current_density_out_of_left  = last_current_density_out_of_left  * alpha + (1. - alpha) * current_density_out_of_left;
-            last_current_density_into_right   = last_current_density_into_right   * alpha + (1. - alpha) * current_density_into_right;
-            last_current_density_out_of_right = last_current_density_out_of_right * alpha + (1. - alpha) * current_density_out_of_right;
+            last_current_density_left  = last_current_density_left  * alpha + (1. - alpha) * current_density_left;
+            last_current_density_right = last_current_density_right * alpha + (1. - alpha) * current_density_right;
+            last_current_density_metal = last_current_density_metal * alpha + (1. - alpha) * current_density_metal;
 
-            plots.current_density_over_time.push((sim.time, last_current_density_into_left, last_current_density_out_of_left, last_current_density_into_right, last_current_density_out_of_right));
+            plots.current_density_over_time.push((sim.time, last_current_density_left, last_current_density_right, last_current_density_metal));
 
             // Calculate total charge
             let superparticles_in_volume = sim.poisson_state.cell_n_supercarriers.iter().map(|n| {
@@ -1154,48 +1247,33 @@ fn main_single(args: SingleArgs) {
     let plotter_current_over_time = UnitPlotter::<units::PS, units::A_PER_CM2>::new("Current density", "t", "J");
     let mut plot_current_over_time = plotter_current_over_time.make_plot();
     let trace = plotter_current_over_time.make_trace(
-        plots.current_density_over_time.iter().map(|&(t, _il, _ol, _ir, _or)| t),
-        plots.current_density_over_time.iter().map(|&(_t, il, _ol, _ir, _or)| il),
+        plots.current_density_over_time.iter().map(|&(t, _l, _r, _m)| t),
+        plots.current_density_over_time.iter().map(|&(t, l, _r, _m)| l),
     )
-        .name("Into left contact").line(Line::new().dash(DashType::Dash));
+        .name("Left").line(Line::new().dash(DashType::Dash));
     plot_current_over_time.add_trace(trace);
     let trace = plotter_current_over_time.make_trace(
-        plots.current_density_over_time.iter().map(|&(t, _il, _ol, _ir, _or)| t),
-        plots.current_density_over_time.iter().map(|&(_t, _il, ol, _ir, _or)| ol),
+        plots.current_density_over_time.iter().map(|&(t, _l, _r, _m)| t),
+        plots.current_density_over_time.iter().map(|&(t, _l, r, _m)| r),
     )
-        .name("Out of left contact").line(Line::new().dash(DashType::Dash));
+        .name("Right").line(Line::new().dash(DashType::Dash));
     plot_current_over_time.add_trace(trace);
     let trace = plotter_current_over_time.make_trace(
-        plots.current_density_over_time.iter().map(|&(t, _il, _ol, _ir, _or)| t),
-        plots.current_density_over_time.iter().map(|&(_t, _il, _ol, ir, _or)| ir),
+        plots.current_density_over_time.iter().map(|&(t, _l, _r, _m)| t),
+        plots.current_density_over_time.iter().map(|&(t, _l, _r, m)| m),
     )
-        .name("Into right contact").line(Line::new().dash(DashType::Dash));
-    plot_current_over_time.add_trace(trace);
-    let trace = plotter_current_over_time.make_trace(
-        plots.current_density_over_time.iter().map(|&(t, _il, _ol, _ir, _or)| t),
-        plots.current_density_over_time.iter().map(|&(_t, _il, _ol, _ir, or)| or),
-    )
-        .name("Out of right contact").line(Line::new().dash(DashType::Dash));
-    plot_current_over_time.add_trace(trace);
-    let trace = plotter_current_over_time.make_trace(
-        plots.current_density_over_time.iter().map(|&(t, _il, _ol, _ir, _or)| t),
-        plots.current_density_over_time.iter().map(|&(_t, il, ol, _ir, _or)| il - ol),
-    )
-        .name("Total through left contact (ingoing)");
-    plot_current_over_time.add_trace(trace);
-    let trace = plotter_current_over_time.make_trace(
-        plots.current_density_over_time.iter().map(|&(t, _il, _ol, _ir, _or)| t),
-        plots.current_density_over_time.iter().map(|&(_t, _il, _ol, ir, or)| or - ir),
-    )
-        .name("Total through right contact (outgoing)");
+        .name("Metal").line(Line::new().dash(DashType::Dash));
+
     plot_current_over_time.add_trace(trace);
 
     common::write_plots("poisson", "schottky", [plots.carrier_density.0, plots.efield.0, plots.voltage.0, plot_charge_over_time, plot_voltage_over_time, plot_current_over_time]);
 
 }
 
-fn main_transients(args: TransientArgs) {
+fn main_transients(_args: TransientArgs) {
+    todo!()
 
+    /*
     let v1_time = units::PS::to_si(500.0);
     let v2_time = units::PS::to_si(500.0);
 
@@ -1280,4 +1358,5 @@ fn main_transients(args: TransientArgs) {
     }
     writer.finish().expect("Could not write file");
     simulator.barfactory.println("Written").unwrap();
+    */
 }
