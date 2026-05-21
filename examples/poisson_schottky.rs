@@ -702,6 +702,20 @@ impl<R: Rng + SeedableRng + Send, S> Simulator<R, S> {
                 // Third step: Re-solve voltage and e-field
                 solve_poisson(solved_surface_charge_at_metal_left, &self.poisson_state, &self.mesh, &self.semiconductors);
 
+                // Check which callbacksh should be called
+                // We need to move callbacks out of self because each callback take a mutable reference to self
+                // So we can't call a callback while iterating over self
+
+                let mut callbacks: Vec<_> = self.callbacks.drain(..).collect();
+
+                for ((cb, interval), last_called) in callbacks.iter_mut().zip(callbacks_called_at.iter_mut()) {
+                    if t > *last_called + *interval {
+                        *last_called = t;
+                        cb(self);
+                    }
+                }
+                self.callbacks.extend(callbacks);
+
                 // Let all Monte Carlo threads simulate
                 for tx in &txs_mc {
                     tx.send(MessageToMCThread::FreeFlight { until_time: t + delta_t } ).expect("Could not send FreeFlight to MC thread");
@@ -725,19 +739,6 @@ impl<R: Rng + SeedableRng + Send, S> Simulator<R, S> {
                     }
                 }
 
-                // Check which callbacksh should be called
-                // We need to move callbacks out of self because each callback take a mutable reference to self
-                // So we can't call a callback while iterating over self
-
-                let mut callbacks: Vec<_> = self.callbacks.drain(..).collect();
-
-                for ((cb, interval), last_called) in callbacks.iter_mut().zip(callbacks_called_at.iter_mut()) {
-                    if t > *last_called + *interval {
-                        *last_called = t;
-                        cb(self);
-                    }
-                }
-                self.callbacks.extend(callbacks);
             }
             // We are done, Stop all threads and return all electrons
             for tx in &txs_mc {
