@@ -6,6 +6,7 @@ use gambling_simulator::{semiconductor::{Electron, Semiconductor, StepInfo}, uni
 use gambling_simulator::consts::{BOLTZMANN, ELECTRON_CHARGE};
 use gambling_simulator::histogram::{generate_histogram_collection_struct, Histogram, Binner, Binner2D, UnitBinner, DiscreteBinner};
 
+use npyz::WriterBuilder;
 use plotly::{common::{DashType, Line, Mode}, layout::Axis, Layout, Plot, Scatter};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
@@ -18,9 +19,15 @@ generate_histogram_collection_struct! {
     struct Histograms {
         velocity: Histogram<Binner2D<UnitBinner<units::KV_PER_CM>, UnitBinner<units::MILLION_CM_PER_SECOND>>>,
         position_x: Histogram<Binner2D<UnitBinner<units::KV_PER_CM>, Binner2D<UnitBinner<units::PS>, UnitBinner<units::NM>>>>,
-        position_z: Histogram<Binner2D<UnitBinner<units::KV_PER_CM>, Binner2D<UnitBinner<units::PS>, UnitBinner<units::NM>>>>,
+        position_r: Histogram<Binner2D<UnitBinner<units::KV_PER_CM>, Binner2D<UnitBinner<units::PS>, UnitBinner<units::NM>>>>,
         energy: Histogram<Binner2D<UnitBinner<units::KV_PER_CM>, UnitBinner<units::MEV>>>,
         mechanism: Histogram<Binner2D<UnitBinner<units::KV_PER_CM>, DiscreteBinner<&'static str>>>,
+        mechanism_weighted: Histogram<Binner2D<UnitBinner<units::KV_PER_CM>, DiscreteBinner<&'static str>>>,
+
+        scatter_time: Histogram<UnitBinner<units::KV_PER_CM>>,
+        scatter_time_weighted: Histogram<UnitBinner<units::KV_PER_CM>>,
+        scatter_count: Histogram<UnitBinner<units::KV_PER_CM>>,
+
         valley: Histogram<Binner2D<UnitBinner<units::KV_PER_CM>, DiscreteBinner<&'static str>>>,
     }
 }
@@ -45,6 +52,7 @@ fn generate_histogram<R: Rng + SeedableRng>(
             let mut electron = Electron::thermalized_in_field(&mut rng, sc.clone(), [0., 0., 0.], step_info.applied_field);
 
             let mut t = 0.;
+            let mut last_scatter_at = 0.;
 
             while t < binner_time.end_si {
                 // Step electron
@@ -53,7 +61,11 @@ fn generate_histogram<R: Rng + SeedableRng>(
                 t += dt;
 
                 // Scatter electron
+                let k_before = electron.k;
+                let k_mag_before = electron.k_mag();
                 let scatter_mech = electron.scatter(&step_info, &mut rng);
+                let k_after = electron.k;
+                let k_mag_after = electron.k_mag();
 
                 if t > binner_time.start_si {
                     // Set histogram
@@ -62,11 +74,21 @@ fn generate_histogram<R: Rng + SeedableRng>(
                     histo.energy.add((efield, electron.energy()), dt);
 
                     histo.position_x.add((efield, (t, electron.pos[0])), dt);
-                    histo.position_z.add((efield, (t, electron.pos[2])), dt);
+                    histo.position_r.add((efield, (t, (electron.pos[1].powi(2) + electron.pos[2].powi(2)).sqrt())), dt);
 
                     histo.valley.add((efield, electron.valley().name), dt);
                     if let Some(mech) = scatter_mech {
+                        let cos_alpha = (k_before[0] * k_after[0] + k_before[1] * k_after[1] + k_before[2] * k_after[2]) / (k_mag_before * k_mag_after);
+                        let weight = 1. - cos_alpha / 2.;
+
                         histo.mechanism.add((efield, mech.name_short), 1.0);
+                        histo.mechanism_weighted.add((efield, mech.name_short), weight);
+
+                        let scatter_time = t - last_scatter_at;
+                        histo.scatter_time.add(efield, scatter_time);
+                        histo.scatter_time_weighted.add(efield, scatter_time / weight);
+                        last_scatter_at = t;
+                        histo.scatter_count.add(efield, 1.0);
                     } // ignore self-scatters
                 }
             }
@@ -148,6 +170,13 @@ fn main() {
             minor: binner_mechanism.clone(),
         }
     );
+    let mechanism_histo_weighted = Histogram::new(
+        "Mechanism (weighted)".into(),
+        Binner2D {
+            major: binner_field.clone(),
+            minor: binner_mechanism.clone(),
+        }
+    );
 
     let valley_names: Vec<&'static str> = sample_sc.valleys.iter().map(|v| v.name).collect();
     let binner_valley = DiscreteBinner::new(valley_names);
@@ -158,6 +187,18 @@ fn main() {
             minor: binner_valley.clone(),
         }
     );
+    let scatter_time = Histogram::new(
+        "Scatter time".into(),
+        binner_field.clone(),
+    );
+    let scatter_time_weighted = Histogram::new(
+        "Scatter time (weighted)".into(),
+        binner_field.clone(),
+    );
+    let scatter_count = Histogram::new(
+        "Scatter count".into(),
+        binner_field.clone(),
+    );
 
     let n_electrons = 300;
     let n_threads = num_cpus::get();
@@ -166,10 +207,14 @@ fn main() {
         let mut histo = Histograms {
             velocity: velocity_histo,
             position_x: position_over_time_histo.clone(),
-            position_z: position_over_time_histo,
+            position_r: position_over_time_histo,
             energy: energy_histo,
             mechanism: mechanism_histo,
+            mechanism_weighted: mechanism_histo_weighted,
             valley: valley_histo,
+            scatter_time,
+            scatter_time_weighted,
+            scatter_count,
         };
 
         let mut handles = (0..n_threads).map(|thread_idx| {
@@ -369,9 +414,9 @@ fn main() {
             });
             let mean_diffusion_x = diffusions_x.sum::<f64>() / binner_time.count as f64;
 
-            let histo_z = histo.position_z.as_ref_at_major(field).unwrap();
+            let histo_r = histo.position_r.as_ref_at_major(field).unwrap();
             let diffusions_z = binner_time.steps().map(|t| {
-                let histo = histo_z.at_major(t).unwrap();
+                let histo = histo_r.at_major(t).unwrap();
                 let var = histo.stddev().powi(2);
                 0.5 * var / t
             });
@@ -494,4 +539,83 @@ fn main() {
 
     let name = format!("mobility-ni-1e{}", (sample_sc.impurity_density/1e6).log10().round());
     write_plots("monte-carlo", name, [plot_histo_v, plot_energy, plot_velocity, plot_mobility, plot_diffusion, plot_mechanisms, plot_valley]);
+
+    let outfile = std::fs::File::create("./plots/monte-carlo/mobility.npz").expect("Could not open output file");
+
+    #[derive(npyz::Serialize, npyz::AutoSerialize)]
+    struct DataPoint {
+        efield: f64,
+        mean_velocity: f64,
+        model_velocity: f64,
+        diffusion_long: f64,
+        diffusion_trans: f64,
+
+        valley_occupation: [f64; 3],
+        mechanisms: [f64; 10],
+        mechanisms_weighted: [f64; 10],
+        scatter_time: f64,
+        scatter_time_weighted: f64,
+    }
+
+    let mut writer = npyz::WriteOptions::<DataPoint>::new()
+        .default_dtype()
+        .shape(&[binner_field.count as u64])
+        .writer(outfile)
+        .begin_nd()
+        .expect("Could not build npz writer");
+
+    for efield in binner_field.steps() {
+        let histo_v = histo.velocity.as_ref_at_major(efield).unwrap();
+        let mean_v = histo_v.mean();
+        let v_model = sample_sc.approx_drift_velocity([efield, 0., 0.,])[0];
+
+        let histo_x = histo.position_x.as_ref_at_major(efield).unwrap();
+        let diffusions_x = binner_time.steps().map(|t| {
+            let histo = histo_x.at_major(t).unwrap();
+            let var = histo.stddev().powi(2);
+            0.5 * var / t
+        });
+        let mean_diffusion_x = diffusions_x.sum::<f64>() / binner_time.count as f64;
+
+        let histo_r = histo.position_r.as_ref_at_major(efield).unwrap();
+        let diffusions_z = binner_time.steps().map(|t| {
+            let histo = histo_r.at_major(t).unwrap();
+            let var = histo.stddev().powi(2);
+            0.5 * var / t
+        });
+        let mean_diffusion_z = diffusions_z.sum::<f64>() / binner_time.count as f64;
+
+        let mut point = DataPoint {
+            efield,
+            mean_velocity: mean_v,
+            model_velocity: v_model,
+            diffusion_long: mean_diffusion_x,
+            diffusion_trans: mean_diffusion_z,
+            valley_occupation: [0.; 3],
+            mechanisms: [0.; 10],
+            mechanisms_weighted: [0.; 10],
+            scatter_time: histo.scatter_time.get(efield) / histo.scatter_count.get(efield),
+            scatter_time_weighted: histo.scatter_time_weighted.get(efield) / histo.scatter_count.get(efield),
+        };
+        let total_occupancy = histo.valley.as_ref_at_major(efield).unwrap().subtotal();
+        for (i, (_valley_name, amount)) in histo.valley.as_ref_at_major(efield).unwrap().all_values().enumerate() {
+            point.valley_occupation[i] = amount / total_occupancy;
+        }
+
+        for (i, (_mech_name, amount)) in histo.mechanism.as_ref_at_major(efield).unwrap().all_values().enumerate() {
+            point.mechanisms[i] = amount / (binner_time.end_si - binner_time.start_si) / n_electrons as f64;
+        }
+        for (i, (_mech_name, amount)) in histo.mechanism_weighted.as_ref_at_major(efield).unwrap().all_values().enumerate() {
+            point.mechanisms_weighted[i] = amount / (binner_time.end_si - binner_time.start_si) / n_electrons as f64;
+        }
+        writer.push(&point).unwrap();
+
+    }
+    writer.finish().expect("Could not write file");
+
+    print!("    mechanisms = [");
+    for mech in binner_mechanism.steps() {
+        print!("{mech:?}, ");
+    }
+    println!("]");
 }
