@@ -410,12 +410,13 @@ fn monte_carlo_simulator<R: Rng>(
 
                 // Handle ohmic contact:
                 // The divergence of the electric field gives the charge concentration. If we have too few electrons, inject a few
-                const N_CELLS_AVERAGED: usize = 100;
+                let ohmic_extent = units::NM::to_si(10.);
+                let n_ohmic_cells = (ohmic_extent / mesh.delta_x()).round() as usize;
                 let div_e = (
-                        poisson_state.efield[n_cells-2].load(Ordering::SeqCst) - poisson_state.efield[n_cells-2 - N_CELLS_AVERAGED].load(Ordering::SeqCst)
-                    ) / (mesh.delta_x() * N_CELLS_AVERAGED as f64);
+                        poisson_state.efield[n_cells-2].load(Ordering::SeqCst) - poisson_state.efield[n_cells-2 - n_ohmic_cells].load(Ordering::SeqCst)
+                    ) / (mesh.delta_x() * n_ohmic_cells as f64);
                 let rho_v = div_e * (EPS0 * semiconductors.last().unwrap().relative_dielectric_static);
-                let rho = rho_v * (mesh.volume_of_cell() * N_CELLS_AVERAGED as f64);
+                let rho = rho_v * (mesh.volume_of_cell() * n_ohmic_cells as f64);
                 if rho > 0. {
                     // Deficiency of electrons, inject a few (:
                     let n_superparticles_should_be_injected = rho / ELECTRON_CHARGE / poisson_state.superparticle_factor;
@@ -430,7 +431,7 @@ fn monte_carlo_simulator<R: Rng>(
 
                         let inj_cell_idx = mesh.n_cells-1;
                         let mut pos = mesh.position_inside_cell(&mut rng, inj_cell_idx);
-                        let n = rng.random_range(0. .. N_CELLS_AVERAGED as f64);
+                        let n = rng.random_range(0. .. n_ohmic_cells as f64);
                         pos[0] = mesh.x_end - (n + 0.5) * mesh.delta_x()/2.;
                         el.pos = pos;
 
