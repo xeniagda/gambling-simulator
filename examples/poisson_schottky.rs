@@ -9,7 +9,7 @@ use gambling_simulator::{consts::{BOLTZMANN, ELECTRON_CHARGE, ELECTRON_MASS, EPS
 use gambling_simulator::semiconductor::{Semiconductor, Electron};
 use gambling_simulator::{ensure_send, ensure_sync};
 
-use npyz::WriterBuilder;
+use npyz::{NpyWriter, WriteOptions, WriterBuilder};
 use rand::{Rng, SeedableRng, seq::SliceRandom};
 use rand_chacha::ChaCha8Rng;
 
@@ -756,26 +756,19 @@ impl<R: Rng + SeedableRng + Send, S> Simulator<R, S> {
 }
 
 const N_SUPERPARTICLES: usize = 10000;
+const N_CELLS: usize = 5000;
 
 fn setup<S>(cmd: Command, callback_state: S) -> Simulator<ChaCha8Rng, S> {
     let mesh = Mesh1D {
-        // real diode
-        // x_start: units::NM::to_si(-50.),
-        // x_end: units::NM::to_si(500.),
-        // fake diode
-        x_start: units::NM::to_si(-48.),
-        x_end: units::NM::to_si(250.),
-        cross_section_area: units::UM2::to_si(0.44),
-        n_cells: 5000,
+        x_start: units::NM::to_si(-cmd.length_active_nm),
+        x_end: units::NM::to_si(cmd.length_buffer_nm),
+        cross_section_area: units::UM2::to_si(cmd.anode_area_um2),
+        n_cells: N_CELLS,
     };
 
-    // real diode
-    let doping_density_1 = units::PER_CM_CUBED::to_si(5e17);
-    let doping_density_2 = units::PER_CM_CUBED::to_si(5e18);
+    let doping_density_1 = units::PER_CM_CUBED::to_si(cmd.nd_active_per_cm3);
+    let doping_density_2 = units::PER_CM_CUBED::to_si(cmd.nd_buffer_per_cm3);
 
-    // fake diode
-    // let doping_density_1 = units::PER_CM_CUBED::to_si(1e17);
-    // let doping_density_2 = units::PER_CM_CUBED::to_si(1e18); // fake ohmic contact
 
     let barrier_height: f64 = units::MILLIVOLT::to_si(750.);
 
@@ -807,7 +800,7 @@ fn setup<S>(cmd: Command, callback_state: S) -> Simulator<ChaCha8Rng, S> {
     )
 }
 
-#[derive(Parser)]
+#[derive(Parser, Clone)]
 struct Command {
     #[command(subcommand)]
     command: Sub,
@@ -816,6 +809,41 @@ struct Command {
     /// Number of threads for monte-carlo solvers
     /// Defaults to number of cpus minus one (to keep one for poisson solving)
     n_cores: Option<usize>,
+
+    #[arg(long, default_value_t = 40)]
+    n_points: usize,
+
+    // Parameters for simulation
+    // Defaults to "reasonable" values
+
+    /// For simulation
+    #[arg(long, default_value_t = 1.0)]
+    anode_area_um2: f64,
+
+    /// For simulation
+    #[arg(long, default_value_t = 5.0e17)]
+    nd_active_per_cm3: f64,
+
+    /// For simulation
+    #[arg(long, default_value_t = 48.0)]
+    length_active_nm: f64,
+
+    /// For simulation
+    #[arg(long, default_value_t = 5.0e18)]
+    nd_buffer_per_cm3: f64,
+
+    /// For simulation
+    #[arg(long, default_value_t = 250.0)]
+    length_buffer_nm: f64,
+}
+
+impl Command {
+    fn default_output_name(&self) -> String {
+        format!(
+            "area-{:.2}_nd-active-{:.2e}_l-active-{:.2}_nd-buffer-{:.2e}_l-buffer-{:.2}",
+            self.anode_area_um2, self.nd_active_per_cm3, self.length_active_nm, self.nd_buffer_per_cm3, self.length_buffer_nm,
+        )
+    }
 }
 
 #[derive(Subcommand, Clone)]
@@ -890,7 +918,7 @@ fn main_dc_sweep(cmd: Command, args: DCSweepArgs) {
         charge_right: f64,
     }
 
-    let mut simulator = setup(cmd, Vec::new());
+    let mut simulator = setup(cmd.clone(), Vec::new());
 
     simulator.register_callback(Box::new(move |sim| {
             if sim.time < sim_time_record_start {
@@ -920,7 +948,7 @@ fn main_dc_sweep(cmd: Command, args: DCSweepArgs) {
         }), units::PS::from_si(0.),
     );
 
-    let n = 40;
+    let n = cmd.n_points;
     let v_start = units::MILLIVOLT::to_si(400.) - simulator.poisson_state.barrier_height;
     let v_stop = units::MILLIVOLT::to_si(1200.) - simulator.poisson_state.barrier_height;
     let all_voltages = (0..n).map(|i| i as f64 / (n as f64) * (v_stop - v_start) + v_start).collect::<Vec<_>>();
@@ -928,6 +956,10 @@ fn main_dc_sweep(cmd: Command, args: DCSweepArgs) {
     let my_start = all_voltages.len() * args.this_computer / args.n_computers;
     let next_start = all_voltages.len() * (args.this_computer + 1) / args.n_computers;
     let voltages = &all_voltages[my_start..next_start];
+
+    let header = simulator.barfactory.add(ProgressBar::new(1));
+    header.set_style(ProgressStyle::with_template(FMT_POISSON_BAR).unwrap());
+    header.set_message(format!("Simulating for {}", cmd.default_output_name()));
 
     let voltage_bar = Arc::new(simulator.barfactory.add(ProgressBar::new(voltages.len() as u64)));
     voltage_bar.set_style(ProgressStyle::with_template(FMT_POISSON_BAR).unwrap());
@@ -954,10 +986,13 @@ fn main_dc_sweep(cmd: Command, args: DCSweepArgs) {
     simulator.barfactory.println(format!("Got {} data points", points.len())).unwrap();
 
     // Write the data to a file
-    let mut path = std::path::PathBuf::from("./plots/poisson/");
+    let mut path = std::path::PathBuf::from("./device-mc-output/");
     if let Some(f) = args.output_folder_name {
         path.push(f);
+    } else {
+        path.push(cmd.default_output_name());
     }
+    std::fs::create_dir_all(&path).expect("Could not create output directory");
 
     if args.output_full {
         path.push(format!("voltage_sweep-full-{}-of-{}.npz", args.this_computer, args.n_computers));
@@ -1084,10 +1119,25 @@ fn main_dc_sweep(cmd: Command, args: DCSweepArgs) {
 
 #[allow(unused)]
 fn main_single(cmd: Command, args: SingleArgs) {
-    let sim_time = units::PS::to_si(50.1);
+    let sim_time = units::PS::to_si(10.1);
+
+    let cb_plot_time = units::PS::to_si(10.0);
+
+    let cb_data_time = units::PS::to_si(0.02);
+
+    // Factor of 2 to ensure we don't run out of space
+    let n_datas = 2 * (sim_time / cb_data_time) as u64;
 
     let applied_voltage = units::VOLT::to_si(args.voltage);
 
+    #[derive(npyz::Serialize, npyz::AutoSerialize)]
+    struct DataPoint {
+        is_valid: bool,
+        time: f64,
+        rho_s_schottky: f64,
+        rho_s_ohmic: f64,
+        charge: [f64; N_CELLS],
+    }
     struct Plots {
         carrier_density: (Plot, UnitPlotter<units::NM, units::ELECTRONS_PER_CM_CUBED>),
         efield: (Plot, UnitPlotter<units::NM, units::KV_PER_CM>),
@@ -1097,11 +1147,29 @@ fn main_single(cmd: Command, args: SingleArgs) {
         current_density_over_time: Vec<(f64, f64, f64, f64)>, // time, left, right, metal
 
         total_charge_over_time: Vec<(f64, f64, f64, f64)>, // time, volume charge, surface charge left, surface contact right
+
+        data_dump: (u64, NpyWriter<DataPoint, std::fs::File>),
     }
+
     let plots = {
         let carrier_density = UnitPlotter::new("Charge density", "x", r"\rho_v");
         let efield = UnitPlotter::new("E-field", "x", "E_x");
         let voltage = UnitPlotter::new("Voltage", "x", "V");
+
+        let mut path = std::path::PathBuf::from("./device-mc-output/");
+        path.push(cmd.default_output_name());
+        std::fs::create_dir_all(&path).expect("Could not create output directory");
+        path.push(format!("dynamics-at-voltage-{:.2}.npz", applied_voltage));
+
+
+        let outfile = std::fs::File::create(path).expect("Could not open output file");
+
+        let data_dump = WriteOptions::<DataPoint>::new()
+            .default_dtype()
+            .writer(outfile)
+            .shape(&[n_datas])
+            .begin_nd()
+            .unwrap();
 
         Plots {
             carrier_density: (carrier_density.make_plot(), carrier_density),
@@ -1110,29 +1178,58 @@ fn main_single(cmd: Command, args: SingleArgs) {
             voltages_over_time: Vec::new(),
             current_density_over_time: Vec::new(),
             total_charge_over_time: Vec::new(),
+            data_dump: (0, data_dump),
         }
     };
 
     let mut simulator = setup(cmd, plots);
     simulator.applied_voltage = applied_voltage;
 
-    let blah_bar = simulator.barfactory.insert(0, ProgressBar::new_spinner().with_style(ProgressStyle::with_template(FMT_THREAD_SPINNER).unwrap()));
-    blah_bar.set_prefix("Plotter");
+
+    let data_bar = simulator.barfactory.insert(0, ProgressBar::new_spinner().with_style(ProgressStyle::with_template(FMT_THREAD_SPINNER).unwrap()));
+    data_bar.set_prefix("Data logger");
 
     simulator.register_callback(
         Box::new(move |sim| {
-            let plots = &mut sim.callback_state;
             let t = units::PS::format(sim.time);
-            blah_bar.set_message(format!("Adding at at t = {t}"));
+            data_bar.set_message(format!("Adding at at t = {t}"));
+
+            let rho_s_schottky = sim.poisson_state.n_supercarriers_at_metal_contact.0.load(Ordering::SeqCst) * sim.poisson_state.superparticle_factor * -ELECTRON_CHARGE / sim.mesh.cross_section_area;
+            let rho_s_ohmic = sim.poisson_state.n_supercarriers_at_metal_contact.1.load(Ordering::SeqCst) * sim.poisson_state.superparticle_factor * -ELECTRON_CHARGE / sim.mesh.cross_section_area;
+
+            let plots = &mut sim.callback_state;
+            let mut row = DataPoint {
+                is_valid: true,
+                time: sim.time,
+                charge: [0.; N_CELLS],
+                rho_s_schottky,
+                rho_s_ohmic,
+            };
+
+            for (i, n_supercarriers) in sim.poisson_state.cell_n_supercarriers.iter().enumerate() {
+                let rho = n_supercarriers.load(Ordering::SeqCst) * sim.poisson_state.superparticle_factor * ELECTRON_CHARGE / sim.mesh.volume_of_cell();
+                row.charge[i] = rho;
+            }
+            plots.data_dump.0 += 1;
+            plots.data_dump.1.push(&row).unwrap();
+        }),
+        cb_data_time,
+    );
+
+    simulator.register_callback(
+        Box::new(move |sim| {
+            let t = units::PS::format(sim.time);
+            let plots = &mut sim.callback_state;
 
             let x = (0..sim.mesh.n_cells)
                 .map(|x| sim.mesh.idx_to_pos(x));
 
             let superparticle_conc = sim.poisson_state.cell_n_supercarriers.iter().map(|x| x.load(Ordering::SeqCst) / sim.mesh.volume_of_cell());
             let conc_relative = superparticle_conc
-                .map(|s_conc| ELECTRON_CHARGE * s_conc * sim.poisson_state.superparticle_factor);
+                .map(|s_conc| ELECTRON_CHARGE * s_conc * sim.poisson_state.superparticle_factor)
+                .collect::<Vec<_>>();
 
-            let trace = plots.carrier_density.1.make_trace(x, conc_relative)
+            let trace = plots.carrier_density.1.make_trace(x, conc_relative.into_iter())
                 .name(format!("t = {t}"));
             plots.carrier_density.0.add_trace(trace);
 
@@ -1153,9 +1250,8 @@ fn main_single(cmd: Command, args: SingleArgs) {
                 .name(format!("t = {t}"));
             plots.voltage.0.add_trace(trace);
         }),
-        units::PS::to_si(10.0),
+        cb_plot_time,
     );
-
 
     // Exponential averaging
     let decay_per_time: f64 = 5. / units::PS::to_si(1.);
@@ -1210,6 +1306,19 @@ fn main_single(cmd: Command, args: SingleArgs) {
     simulator.simulate(sim_time);
 
     let mut plots = simulator.callback_state;
+    // If we pushed too few, extend
+    assert!(plots.data_dump.0 <= n_datas, "Wrote too many data points! Wrote {}, allocated {}", plots.data_dump.0, n_datas);
+    for i in 0..(n_datas - plots.data_dump.0) {
+        let point = DataPoint {
+            is_valid: false,
+            time: 0.,
+            charge: [0.; N_CELLS],
+            rho_s_schottky: 0.,
+            rho_s_ohmic: 0.,
+        };
+        plots.data_dump.1.push(&point);
+    }
+    plots.data_dump.1.finish().expect("Could not dump npz");
 
     let rho_donors = simulator.semiconductors.iter().map(|s| s.impurity_density * simulator.mesh.volume_of_cell() * ELECTRON_CHARGE).sum::<f64>();
 
